@@ -69,6 +69,41 @@ o2physics_add_dpl_workflow(ft0-qa
                     PUBLIC_LINK_LIBRARIES O2::Framework O2Physics::AnalysisCore O2::DetectorsBase
                     COMPONENT_NAME Analysis)
 
+o2physics_add_dpl_workflow(mft-track-vertex-refit
+                    SOURCES mftTrackVertexRefit.cxx
+                    PUBLIC_LINK_LIBRARIES O2::Framework O2Physics::AnalysisCore O2::CCDB
+                                          O2::DataFormatsParameters O2::ReconstructionDataFormats
+                                          O2::DetectorsBase O2::Field
+                    COMPONENT_NAME Analysis)
+
+o2physics_add_dpl_workflow(mft-track-pair-mass
+                    SOURCES mftTrackPairMass.cxx
+                    PUBLIC_LINK_LIBRARIES O2::Framework O2Physics::AnalysisCore
+                    COMPONENT_NAME Analysis)
+
+o2physics_add_dpl_workflow(mft-standalone-track-qa
+                    SOURCES mftStandaloneTrackQa.cxx
+                    PUBLIC_LINK_LIBRARIES O2::Framework O2Physics::AnalysisCore
+                    COMPONENT_NAME Analysis)
+
+o2physics_add_dpl_workflow(mc-forward-muon-vz
+                    SOURCES mcForwardMuonVz.cxx
+                    PUBLIC_LINK_LIBRARIES O2::Framework O2Physics::AnalysisCore
+                    COMPONENT_NAME Analysis)
+
+o2physics_add_dpl_workflow(mft-mch-mid-direct-efficiency
+                    SOURCES mftMchMidDirectEfficiency.cxx
+                    PUBLIC_LINK_LIBRARIES O2::Framework O2Physics::AnalysisCore
+                    COMPONENT_NAME Analysis)
+
+o2physics_add_dpl_workflow(global-track-matching-study
+                    SOURCES globalTrackMatchingStudy.cxx
+                    PUBLIC_LINK_LIBRARIES O2::Framework O2Physics::AnalysisCore O2::CCDB
+                                          O2::DataFormatsParameters O2::DetectorsBase
+                                          O2::GlobalTracking O2::MCHTracking
+                                          O2::ReconstructionDataFormats
+                    COMPONENT_NAME Analysis)
+
 o2physics_add_dpl_workflow(qa-cpv
                     SOURCES cpvQa.cxx
                     PUBLIC_LINK_LIBRARIES O2::Framework O2Physics::AnalysisCore O2::DetectorsBase
