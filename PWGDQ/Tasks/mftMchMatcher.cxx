@@ -18,7 +18,6 @@
 #include "Common/DataModel/EventSelection.h"
 #include "Common/DataModel/Multiplicity.h"
 #include "Common/DataModel/TrackSelectionTables.h"
-#include "Common/Tasks/mftMchMatchingCategories.h"
 
 #include <CCDB/BasicCCDBManager.h>
 #include <CCDB/CcdbApi.h>
@@ -40,19 +39,22 @@
 #include <ReconstructionDataFormats/GlobalFwdTrack.h>
 #include <ReconstructionDataFormats/TrackFwd.h>
 
+#include <Math/MatrixRepresentationsStatic.h>
+#include <Math/SMatrix.h>
+#include <Math/SVector.h>
 #include <TMath.h>
 #include <TTree.h>
 
+#include <RtypesCore.h>
+
 #include <algorithm>
-#include <array>
 #include <cmath>
 #include <cstdint>
-#include <limits>
+#include <map>
 #include <memory>
 #include <random>
 #include <string>
 #include <unordered_map>
-#include <unordered_set>
 #include <utility>
 #include <vector>
 
@@ -63,11 +65,20 @@ using namespace o2::aod;
 using MyEvents = soa::Join<aod::Collisions, aod::EvSels, aod::MFTMults>;
 using MyMuonsWithCov = soa::Join<aod::FwdTracks, aod::FwdTracksCov, aod::FwdTracksDCA, aod::FwdTrkCompColls>;
 using MyMuonsMC = soa::Join<aod::FwdTracks, aod::FwdTracksCov, aod::McFwdTrackLabels, aod::FwdTracksDCA, aod::FwdTrkCompColls>;
-using MyMFTs = soa::Join<aod::MFTTracks, aod::MFTTrkCompColls>;
+using MyMFTs = aod::MFTTracks;
 using MyMFTCovariances = aod::MFTTracksCov;
-using MyMFTsMC = soa::Join<aod::MFTTracks, aod::McMFTTrackLabels, aod::MFTTrkCompColls>;
+using MyMFTsMC = soa::Join<aod::MFTTracks, aod::McMFTTrackLabels>;
 
-namespace matchingcategory = o2::analysis::mftmchmatching;
+using MyMuon = MyMuonsWithCov::iterator;
+using MyMuonMC = MyMuonsMC::iterator;
+using MyMFT = MyMFTs::iterator;
+using MyMFTCovariance = MyMFTCovariances::iterator;
+
+using namespace std;
+
+using SMatrix55 = ROOT::Math::SMatrix<double, 5, 5, ROOT::Math::MatRepSym<double, 5>>;
+using SMatrix55Std = ROOT::Math::SMatrix<double, 5>;
+using SMatrix5 = ROOT::Math::SVector<Double_t, 5>;
 
 namespace o2::aod
 {
@@ -141,71 +152,6 @@ DECLARE_SOA_COLUMN(MatchLabel, matchLabel, int);
 DECLARE_SOA_COLUMN(IsSignal, isSignal, bool);
 } // namespace fwdmatchcandidates
 
-namespace mftmchmatchpairs
-{
-DECLARE_SOA_COLUMN(IsMixedEvent, isMixedEvent, bool);
-DECLARE_SOA_COLUMN(IsCorrectMatch, isCorrectMatch, int);
-DECLARE_SOA_COLUMN(McMatchCategory, mcMatchCategory, int);
-DECLARE_SOA_COLUMN(McMatchStudyCategory, mcMatchStudyCategory, int);
-DECLARE_SOA_COLUMN(McPdgCodeMCH, mcPdgCodeMCH, int);
-DECLARE_SOA_COLUMN(McPdgCodeMFT, mcPdgCodeMFT, int);
-DECLARE_SOA_COLUMN(McFirstMotherPdgCodeMCH, mcFirstMotherPdgCodeMCH, int);
-DECLARE_SOA_COLUMN(HasTrueMftForMchMuon, hasTrueMftForMchMuon, bool);
-DECLARE_SOA_COLUMN(HasTrueMftForMchMuonInMcCollision, hasTrueMftForMchMuonInMcCollision, bool);
-DECLARE_SOA_COLUMN(HasMotherMftForMchMuonInMcCollision, hasMotherMftForMchMuonInMcCollision, bool);
-DECLARE_SOA_COLUMN(HasNoTrueOrMotherMftForMchMuonInMcCollision, hasNoTrueOrMotherMftForMchMuonInMcCollision, bool);
-DECLARE_SOA_COLUMN(SameMcCollision, sameMcCollision, bool);
-DECLARE_SOA_COLUMN(MchCollisionId, mchCollisionId, int64_t);
-DECLARE_SOA_COLUMN(NSelectedMchMidMuonsInCollision, nSelectedMchMidMuonsInCollision, int);
-DECLARE_SOA_COLUMN(MftCollisionId, mftCollisionId, int64_t);
-DECLARE_SOA_COLUMN(MchTrackId, mchTrackId, int64_t);
-DECLARE_SOA_COLUMN(MftTrackId, mftTrackId, int64_t);
-DECLARE_SOA_COLUMN(ZMCH, zMCH, float);
-DECLARE_SOA_COLUMN(XMCH, xMCH, float);
-DECLARE_SOA_COLUMN(YMCH, yMCH, float);
-DECLARE_SOA_COLUMN(PhiMCH, phiMCH, float);
-DECLARE_SOA_COLUMN(TglMCH, tglMCH, float);
-DECLARE_SOA_COLUMN(InvQPtMCH, invQPtMCH, float);
-DECLARE_SOA_COLUMN(PtMCH, ptMCH, float);
-DECLARE_SOA_COLUMN(EtaMCH, etaMCH, float);
-DECLARE_SOA_COLUMN(PMCH, pMCH, float);
-DECLARE_SOA_COLUMN(Chi2MCH, chi2MCH, float);
-DECLARE_SOA_COLUMN(InvQPtMCHAtMftLastDisk, invQPtMCHAtMftLastDisk, float);
-DECLARE_SOA_COLUMN(PtMCHAtMftLastDisk, ptMCHAtMftLastDisk, float);
-DECLARE_SOA_COLUMN(ZMFT, zMFT, float);
-DECLARE_SOA_COLUMN(XMFT, xMFT, float);
-DECLARE_SOA_COLUMN(YMFT, yMFT, float);
-DECLARE_SOA_COLUMN(PhiMFT, phiMFT, float);
-DECLARE_SOA_COLUMN(TglMFT, tglMFT, float);
-DECLARE_SOA_COLUMN(InvQPtMFT, invQPtMFT, float);
-DECLARE_SOA_COLUMN(PtMFT, ptMFT, float);
-DECLARE_SOA_COLUMN(EtaMFT, etaMFT, float);
-DECLARE_SOA_COLUMN(Chi2MFT, chi2MFT, float);
-DECLARE_SOA_COLUMN(NClustersMFT, nClustersMFT, int);
-DECLARE_SOA_COLUMN(InvQPtMFTOwn, invQPtMFTOwn, float);
-DECLARE_SOA_COLUMN(PtMFTOwn, ptMFTOwn, float);
-DECLARE_SOA_COLUMN(EtaMFTOwn, etaMFTOwn, float);
-DECLARE_SOA_COLUMN(InvQPtMFTAtMftLastDisk, invQPtMFTAtMftLastDisk, float);
-DECLARE_SOA_COLUMN(PtMFTAtMftLastDisk, ptMFTAtMftLastDisk, float);
-DECLARE_SOA_COLUMN(PhiMFTPVWithMchMomentum, phiMFTPVWithMchMomentum, float);
-DECLARE_SOA_COLUMN(EtaMFTPVWithMchMomentum, etaMFTPVWithMchMomentum, float);
-DECLARE_SOA_COLUMN(PMCHAtMftZ, pMCHAtMftZ, float);
-DECLARE_SOA_COLUMN(PMCHMinusPPrime, pMCHMinusPPrime, float);
-} // namespace mftmchmatchpairs
-
-namespace mchmidvertextracks
-{
-DECLARE_SOA_COLUMN(ZMCHVertex, zMCHVertex, float);
-DECLARE_SOA_COLUMN(XMCHVertex, xMCHVertex, float);
-DECLARE_SOA_COLUMN(YMCHVertex, yMCHVertex, float);
-DECLARE_SOA_COLUMN(PhiMCHVertex, phiMCHVertex, float);
-DECLARE_SOA_COLUMN(TglMCHVertex, tglMCHVertex, float);
-DECLARE_SOA_COLUMN(InvQPtMCHVertex, invQPtMCHVertex, float);
-DECLARE_SOA_COLUMN(PtMCHVertex, ptMCHVertex, float);
-DECLARE_SOA_COLUMN(EtaMCHVertex, etaMCHVertex, float);
-DECLARE_SOA_COLUMN(PMCHVertex, pMCHVertex, float);
-} // namespace mchmidvertextracks
-
 DECLARE_SOA_TABLE(FwdMatchMLCandidates, "AOD", "FWDMLCAND",
                   fwdmatchcandidates::XMCH,
                   fwdmatchcandidates::YMCH,
@@ -269,77 +215,10 @@ DECLARE_SOA_TABLE(FwdMatchMLCandidates, "AOD", "FWDMLCAND",
                   fwdmatchcandidates::McMaskGlob,
                   fwdmatchcandidates::MatchLabel,
                   fwdmatchcandidates::IsSignal);
-
-DECLARE_SOA_TABLE(MftMchMatchPairs, "AOD", "MFTMCHPAIR",
-                  mftmchmatchpairs::IsMixedEvent,
-                  mftmchmatchpairs::IsCorrectMatch,
-                  mftmchmatchpairs::McMatchCategory,
-                  mftmchmatchpairs::McMatchStudyCategory,
-                  mftmchmatchpairs::McPdgCodeMCH,
-                  mftmchmatchpairs::McPdgCodeMFT,
-                  mftmchmatchpairs::McFirstMotherPdgCodeMCH,
-                  mftmchmatchpairs::HasTrueMftForMchMuon,
-                  mftmchmatchpairs::HasTrueMftForMchMuonInMcCollision,
-                  mftmchmatchpairs::HasMotherMftForMchMuonInMcCollision,
-                  mftmchmatchpairs::HasNoTrueOrMotherMftForMchMuonInMcCollision,
-                  mftmchmatchpairs::SameMcCollision,
-                  mftmchmatchpairs::MchCollisionId,
-                  mftmchmatchpairs::NSelectedMchMidMuonsInCollision,
-                  mftmchmatchpairs::MftCollisionId,
-                  mftmchmatchpairs::MchTrackId,
-                  mftmchmatchpairs::MftTrackId,
-                  mftmchmatchpairs::ZMCH,
-                  mftmchmatchpairs::XMCH,
-                  mftmchmatchpairs::YMCH,
-                  mftmchmatchpairs::PhiMCH,
-                  mftmchmatchpairs::TglMCH,
-                  mftmchmatchpairs::InvQPtMCH,
-                  mftmchmatchpairs::PtMCH,
-                  mftmchmatchpairs::EtaMCH,
-                  mftmchmatchpairs::PMCH,
-                  mftmchmatchpairs::Chi2MCH,
-                  mftmchmatchpairs::InvQPtMCHAtMftLastDisk,
-                  mftmchmatchpairs::PtMCHAtMftLastDisk,
-                  mftmchmatchpairs::ZMFT,
-                  mftmchmatchpairs::XMFT,
-                  mftmchmatchpairs::YMFT,
-                  mftmchmatchpairs::PhiMFT,
-                  mftmchmatchpairs::TglMFT,
-                  mftmchmatchpairs::InvQPtMFT,
-                  mftmchmatchpairs::PtMFT,
-                  mftmchmatchpairs::EtaMFT,
-                  mftmchmatchpairs::Chi2MFT,
-                  mftmchmatchpairs::NClustersMFT,
-                  mftmchmatchpairs::InvQPtMFTOwn,
-                  mftmchmatchpairs::PtMFTOwn,
-                  mftmchmatchpairs::EtaMFTOwn,
-                  mftmchmatchpairs::InvQPtMFTAtMftLastDisk,
-                  mftmchmatchpairs::PtMFTAtMftLastDisk,
-                  mftmchmatchpairs::PhiMFTPVWithMchMomentum,
-                  mftmchmatchpairs::EtaMFTPVWithMchMomentum,
-                  mftmchmatchpairs::PMCHAtMftZ,
-                  mftmchmatchpairs::PMCHMinusPPrime);
-
-DECLARE_SOA_TABLE(MchMidVertexTracks, "AOD", "MCHMIDVTX",
-                  mftmchmatchpairs::MchCollisionId,
-                  mftmchmatchpairs::MchTrackId,
-                  mchmidvertextracks::ZMCHVertex,
-                  mchmidvertextracks::XMCHVertex,
-                  mchmidvertextracks::YMCHVertex,
-                  mchmidvertextracks::PhiMCHVertex,
-                  mchmidvertextracks::TglMCHVertex,
-                  mchmidvertextracks::InvQPtMCHVertex,
-                  mchmidvertextracks::PtMCHVertex,
-                  mchmidvertextracks::EtaMCHVertex,
-                  mchmidvertextracks::PMCHVertex);
->>>>>>> 562aa64bd (daily commit 20260808-1)
 } // namespace o2::aod
 
 struct mftMchMatcher {
   Produces<o2::aod::FwdMatchMLCandidates> fwdMatchMLCandidates;
-
-  Produces<o2::aod::MftMchMatchPairs> mftMchMatchPairs;
-  Produces<o2::aod::MchMidVertexTracks> mchMidVertexTracks;
   ////   Variables for selecting muon tracks
   Configurable<float> fPMchLow{"cfgPMchLow", 0.0f, ""};
   Configurable<float> fPtMchLow{"cfgPtMchLow", 0.7f, ""};
@@ -362,18 +241,6 @@ struct mftMchMatcher {
 
   Configurable<bool> fKeepBestMatch{"cfgKeepBestMatch", false, "Keep only the best match global muons in the skimming"};
   Configurable<float> fzMatching{"cfgzMatching", -77.5f, "Plane for MFT-MCH matching"};
-  Configurable<bool> fFillFwdMatchMLCandidates{"cfgFillFwdMatchMLCandidates", true, "Fill the existing FWDMLCAND table for global MFT-MCH-MID candidates"};
-  Configurable<bool> fFillMftMchPairTable{"cfgFillMftMchPairTable", false, "Fill pair-level MCH-MID/MFT matching-plane parameters for same-event and mixed-event studies"};
-  Configurable<bool> fFillMchMidVertexTable{"cfgFillMchMidVertexTable", false, "Fill MCH-MID tracks propagated to the collision vertex for dimuon studies"};
-  Configurable<bool> fFillAllMchMidMftHelixDeltas{"cfgFillAllMchMidMftHelixDeltas", true, "Process all same-collision MCH-MID/MFT pairs at the matching plane for MFTMCHPAIR output"};
-  Configurable<bool> fFillMixedMchMidMftHelixDeltas{"cfgFillMixedMchMidMftHelixDeltas", true, "Process mixed-event MCH-MID/MFT pairs at the matching plane for MFTMCHPAIR output"};
-  Configurable<bool> fFillQaHistograms{"cfgFillQaHistograms", false, "Fill QA/debug histograms not needed by the pair-table based downstream analysis"};
-  Configurable<bool> fUseBestTimeCollision{"cfgUseBestTimeCollision", false, "Use the time-compatible collision with the smallest normalized time residual for MCH-MID tracks"};
-  Configurable<bool> fRequireSingleMchCompatibleCollision{"cfgRequireSingleMchCompatibleCollision", false, "Analyze only MCH-MID tracks with exactly one time-compatible collision"};
-  Configurable<int> fEventMixingDepth{"cfgEventMixingDepth", 5, "Number of collisions per vertex-z bin used for event mixing"};
-  Configurable<int64_t> fMinMixingBcGap{"cfgMinMixingBcGap", 0, "Minimum absolute global-BC gap between collisions used for MCH-MID/MFT event mixing"};
-  Configurable<int> fEventMixingGap{"cfgEventMixingGap", 5, "Deprecated for O2 selfCombinations-based event mixing"};
-  ConfigurableAxis fEventMixingVtxBins{"cfgEventMixingVtxBins", {VARIABLE_WIDTH, -10.f, -8.f, -6.f, -4.f, -2.f, 0.f, 2.f, 4.f, 6.f, 8.f, 10.f}, "Vertex-z bins for event mixing"};
 
   Configurable<float> fSamplingFraction{"cfgSamplingFraction", 1.f, "Fraction of randomly selected events to be processed"};
   Configurable<float> fSamplingFractionTrueLeadingMatches{"cfgSamplingFractionTrueLeadingMatches", 1.f, "Fraction of randomly selected leading true matches to be processed"};
@@ -405,7 +272,6 @@ struct mftMchMatcher {
   };
 
   o2::globaltracking::MatchGlobalFwd mExtrap;
-  double mBzAtMftCenter{0};
 
   int mRunNumber{0}; // needed to detect if the run changed and trigger update of magnetic field
   Service<o2::ccdb::BasicCCDBManager> ccdbManager{};
@@ -420,10 +286,10 @@ struct mftMchMatcher {
 
   std::unordered_map<int64_t, int32_t> mftCovIndexes;
 
-  std::unordered_set<uint32_t> fBestMatch;
+  std::map<uint32_t, bool> fBestMatch;
 
   HistogramRegistry registry{"registry", {}};
-  
+
   template <typename T, typename C>
   o2::dataformats::GlobalFwdTrack trackToGlobalFwd(const T& track, const C& cov)
   {
@@ -438,584 +304,15 @@ struct mftMchMatcher {
     fwdtrack.setParameters(trackparCov.getParameters());
     fwdtrack.setCovariances(trackparCov.getCovariances());
     return fwdtrack;
-  struct PropagatedTrackAtMatching {
-    float z = 0.f;
-    float x = 0.f;
-    float y = 0.f;
-    float phi = 0.f;
-    float tgl = 0.f;
-    float invQPt = 0.f;
-    float pt = 0.f;
-    float eta = 0.f;
-  };
-
-  struct PropagatedMchMidTrackAtMatching {
-    o2::track::TrackParCovFwd rawTrack;
-    PropagatedTrackAtMatching values;
-    int64_t globalIndex = -1;
-    float chi2 = 0.f;
-  };
-
-  struct McTrackOriginInfo {
-    bool hasMcParticle = false;
-    int64_t mcParticleId = -1;
-    int64_t mcCollisionId = -1;
-    int pdgCode = 0;
-    bool isMuon = false;
-    bool isPhysicalPrimary = false;
-    bool hasPiKMother = false;
-    std::unordered_set<int64_t> piKMotherMcParticleIds;
-    bool hasMotherMcParticle = false;
-    int64_t motherMcParticleId = -1;
-    int firstMotherPdgCode = 0;
-  };
-
-  struct MftTrackForPairing {
-    o2::track::TrackParCovFwd track;
-    // The own-momentum parameters at the MFT last disk are independent of the MCH track, so they are cached once per MFT track.
-    PropagatedTrackAtMatching valuesAtMftLastDisk;
-    int64_t globalIndex = -1;
-    float chi2 = 0.f;
-    int nClusters = 0;
-    bool hasMcParticle = false;
-    int64_t mcParticleId = -1;
-    McTrackOriginInfo mcOrigin;
-  };
-
-  struct PairPropagationResult {
-    PropagatedTrackAtMatching mchValuesAtMftLastDisk;
-    PropagatedTrackAtMatching mftValuesAtMatching;
-    float mchMomentumAtMftZ = 0.f;
-    float mchMomentumLoss = 0.f;
-  };
-
-  struct McPairInfo {
-    int isCorrectMatch = -1;
-    int matchCategory = matchingcategory::serialized(matchingcategory::McMatchCategory::Unknown);
-    int matchStudyCategory = matchingcategory::serialized(matchingcategory::McMatchStudyCategory::Unknown);
-    int mchMcPdgCode = 0;
-    int mftMcPdgCode = 0;
-    int mchFirstMotherPdgCode = 0;
-    bool hasTrueMftForMchMuon = false;
-    bool hasTrueMftForMchMuonInMcCollision = false;
-    bool hasMotherMftForMchMuonInMcCollision = false;
-    bool hasNoTrueOrMotherMftForMchMuonInMcCollision = false;
-    bool sameMcCollision = false;
-  };
-
-  struct BestTimeCollisionChoice {
-    int64_t selectedCollisionId = -1;
-    int64_t originalCollisionId = -1;
-    int nCompatibleCollisions = 0;
-    float bestTimeResidual = std::numeric_limits<float>::quiet_NaN();
-    float secondBestTimeResidual = std::numeric_limits<float>::quiet_NaN();
-  };
-
-  using CovarianceValues = std::array<float, 15>;
-
-  static float etaFromTgl(float tgl)
-  {
-    return std::asinh(tgl);
-  }
-
-  static float ptFromInvQPt(float invQPt)
-  {
-    constexpr float minAbsInvQPt = 1.e-12f;
-    return std::abs(invQPt) > minAbsInvQPt ? std::abs(1.f / invQPt) : 0.f;
-  }
-
-  static float pFromPtTgl(float pt, float tgl)
-  {
-    return pt * std::sqrt(1.f + tgl * tgl);
-  }
-
-  static PropagatedTrackAtMatching makePropagatedTrackValues(const o2::track::TrackParCovFwd& track)
-  {
-    PropagatedTrackAtMatching values;
-    values.z = track.getZ();
-    values.x = track.getX();
-    values.y = track.getY();
-    values.phi = track.getPhi();
-    values.tgl = track.getTgl();
-    values.invQPt = track.getInvQPt();
-    values.pt = ptFromInvQPt(values.invQPt);
-    values.eta = etaFromTgl(values.tgl);
-    return values;
-  }
-
-  template <class TCOVARIANCE>
-  static CovarianceValues flattenCovariance(const TCOVARIANCE& covariance)
-  {
-    return {static_cast<float>(covariance(0, 0)),
-            static_cast<float>(covariance(1, 1)),
-            static_cast<float>(covariance(2, 2)),
-            static_cast<float>(covariance(3, 3)),
-            static_cast<float>(covariance(4, 4)),
-            static_cast<float>(covariance(1, 0)),
-            static_cast<float>(covariance(2, 1)),
-            static_cast<float>(covariance(2, 0)),
-            static_cast<float>(covariance(3, 0)),
-            static_cast<float>(covariance(3, 1)),
-            static_cast<float>(covariance(3, 2)),
-            static_cast<float>(covariance(4, 0)),
-            static_cast<float>(covariance(4, 1)),
-            static_cast<float>(covariance(4, 2)),
-            static_cast<float>(covariance(4, 3))};
-  }
-
-  std::optional<o2::track::TrackParCovFwd> propagateMchToZWithEnergyLoss(const o2::track::TrackParCovFwd& fwdTrack, float z)
-  {
-    constexpr float absorberBeginZ = -90.f;
-    o2::dataformats::GlobalFwdTrack globalTrack;
-    globalTrack.setParameters(fwdTrack.getParameters());
-    globalTrack.setZ(fwdTrack.getZ());
-    globalTrack.setCovariances(fwdTrack.getCovariances());
-
-    auto mchTrack = mMatching.FwdtoMCH(globalTrack);
-    // For planes downstream of the absorber entrance, propagate through the absorber with energy-loss handling
-    // but without the Branson correction. Upstream MCH-side planes use the standard covariance extrapolation.
-    const bool propagationOk = z >= absorberBeginZ ? o2::mch::TrackExtrap::extrapToVertexWithoutBranson(mchTrack, z)
-                                                   : o2::mch::TrackExtrap::extrapToZCov(mchTrack, z);
-    if (!propagationOk) {
-      return std::nullopt;
-    }
-    o2::track::TrackParCovFwd propagatedTrack = mMatching.MCHtoFwd(mchTrack);
-    return propagatedTrack;
-  }
-
-  template <class C>
-  std::optional<o2::track::TrackParCovFwd> propagateMchToCollisionVertex(const o2::track::TrackParCovFwd& fwdTrack, const C& collision)
-  {
-    o2::dataformats::GlobalFwdTrack globalTrack;
-    globalTrack.setParameters(fwdTrack.getParameters());
-    globalTrack.setZ(fwdTrack.getZ());
-    globalTrack.setCovariances(fwdTrack.getCovariances());
-
-    auto mchTrack = mMatching.FwdtoMCH(globalTrack);
-    const bool propagationOk = o2::mch::TrackExtrap::extrapToVertex(mchTrack, collision.posX(), collision.posY(), collision.posZ(), collision.covXX(), collision.covYY());
-    if (!propagationOk) {
-      return std::nullopt;
-    }
-    o2::track::TrackParCovFwd propagatedTrack = mMatching.MCHtoFwd(mchTrack);
-    return propagatedTrack;
-  }
-
-  static bool setTrackTotalMomentum(o2::track::TrackParCovFwd& track, float totalMomentum)
-  {
-    if (!std::isfinite(totalMomentum) || totalMomentum <= 0.f) {
-      return false;
-    }
-    const auto tgl = static_cast<float>(track.getTgl());
-    const auto pt = totalMomentum / std::sqrt(1.f + tgl * tgl);
-    if (!std::isfinite(pt) || pt <= 0.f) {
-      return false;
-    }
-    const auto chargeSign = std::signbit(track.getInvQPt()) ? -1.f : 1.f;
-    track.setInvQPt(chargeSign / pt);
-    return true;
-  }
-
-  std::optional<PropagatedTrackAtMatching> propagateMftToMatchingWithMchMomentum(const o2::track::TrackParCovFwd& mftTrack,
-                                                                                 float mchMomentumAtMftZ) const
-  {
-    // Pair-dependent MFT propagation: replace only the momentum magnitude with the MCH momentum propagated to the MFT z.
-    auto mftWithMchMomentum = mftTrack;
-    if (!setTrackTotalMomentum(mftWithMchMomentum, mchMomentumAtMftZ)) {
-      return std::nullopt;
-    }
-    mftWithMchMomentum.propagateToZhelix(fzMatching.value, mBzAtMftCenter);
-    return makePropagatedTrackValues(mftWithMchMomentum);
-  }
-
-  std::optional<PropagatedTrackAtMatching> propagateMftToZWithMchMomentum(const o2::track::TrackParCovFwd& mftTrack,
-                                                                          float mchMomentumAtMftZ,
-                                                                          float z) const
-  {
-    auto mftWithMchMomentum = mftTrack;
-    if (!setTrackTotalMomentum(mftWithMchMomentum, mchMomentumAtMftZ)) {
-      return std::nullopt;
-    }
-    mftWithMchMomentum.propagateToZhelix(z, mBzAtMftCenter);
-    return makePropagatedTrackValues(mftWithMchMomentum);
-  }
-
-  static bool inRange(float value, float low, float up)
-  {
-    return value >= low && value <= up;
-  }
-
-  static bool inPhiRange(float phi, float low, float up)
-  {
-    if (low <= up) {
-      return phi >= low && phi <= up;
-    }
-    return phi >= low || phi <= up;
-  }
-
-  template <class TCOLL>
-  bool isSelectedCollision(const TCOLL& collision) const
-  {
-    if (fApplySel8.value && !collision.sel8()) {
-      return false;
-    }
-    if (fApplyVtxZCut.value && std::abs(collision.posZ()) > fVtxZMax.value) {
-      return false;
-    }
-    return true;
-  }
-
-  template <class TTRACK>
-  bool hasRequiredMchCompatibleCollisionMultiplicity(const TTRACK& track) const
-  {
-    return !fRequireSingleMchCompatibleCollision.value || track.compatibleCollIds().size() == 1;
-  }
-
-  template <class TBCS, class TTRACK, class TCOLLS>
-  BestTimeCollisionChoice chooseBestTimeCollision(const TTRACK& track,
-                                                  const TCOLLS& collisions,
-                                                  const std::unordered_set<int64_t>& selectedCollisionIds) const
-  {
-    BestTimeCollisionChoice choice;
-    if (!track.has_collision()) {
-      return choice;
-    }
-
-    choice.originalCollisionId = static_cast<int64_t>(track.collisionId());
-    choice.selectedCollisionId = choice.originalCollisionId;
-
-    if (!fUseBestTimeCollision.value) {
-      choice.nCompatibleCollisions = 1;
-      return choice;
-    }
-
-    const auto& compatibleCollisionIds = track.compatibleCollIds();
-    choice.nCompatibleCollisions = static_cast<int>(compatibleCollisionIds.size());
-    if (compatibleCollisionIds.empty()) {
-      return choice;
-    }
-
-    const auto& originalCollision = collisions.rawIteratorAt(choice.originalCollisionId);
-    const auto& originalBC = originalCollision.template bc_as<TBCS>();
-    const int64_t trackBC = static_cast<int64_t>(originalBC.globalBC());
-    const float trackTime = track.trackTime();
-    const float trackTimeRes = track.trackTimeRes();
-    float bestAbsResidual = std::numeric_limits<float>::max();
-    float secondBestAbsResidual = std::numeric_limits<float>::max();
-
-    for (const auto compatibleCollisionId : compatibleCollisionIds) {
-      const int64_t collisionId = static_cast<int64_t>(compatibleCollisionId);
-      if (selectedCollisionIds.find(collisionId) == selectedCollisionIds.end()) {
-        continue;
-      }
-
-      const auto& candidateCollision = collisions.rawIteratorAt(collisionId);
-      const auto& candidateBC = candidateCollision.template bc_as<TBCS>();
-      const int64_t collisionBC = static_cast<int64_t>(candidateBC.globalBC());
-      const float deltaTime = trackTime - candidateCollision.collisionTime() + (trackBC - collisionBC) * o2::constants::lhc::LHCBunchSpacingNS;
-      const float sigmaTime = std::sqrt(trackTimeRes * trackTimeRes + candidateCollision.collisionTimeRes() * candidateCollision.collisionTimeRes());
-      const float residual = sigmaTime > 0.f ? deltaTime / sigmaTime : deltaTime;
-      const float absResidual = std::abs(residual);
-
-      if (absResidual < bestAbsResidual) {
-        secondBestAbsResidual = bestAbsResidual;
-        choice.secondBestTimeResidual = choice.bestTimeResidual;
-        bestAbsResidual = absResidual;
-        choice.bestTimeResidual = residual;
-        choice.selectedCollisionId = collisionId;
-      } else if (absResidual < secondBestAbsResidual) {
-        secondBestAbsResidual = absResidual;
-        choice.secondBestTimeResidual = residual;
-      }
-    }
-
-    return choice;
-  }
-
-  bool isSelectedMchMidAtMatching(const PropagatedTrackAtMatching& track, float rAbs) const
-  {
-    if (!inRange(track.eta, fEtaMchLow.value, fEtaMchUp.value)) {
-      return false;
-    }
-    if (!inPhiRange(track.phi, fPhiMchLow.value, fPhiMchUp.value)) {
-      return false;
-    }
-    if (track.pt < fPtMchLow.value) {
-      return false;
-    }
-    if (!inRange(rAbs, fRabsLow.value, fRabsUp.value)) {
-      return false;
-    }
-    return true;
-  }
-
-  bool isSelectedMFTAtMatching(const PropagatedTrackAtMatching& track) const
-  {
-    if (!inRange(track.eta, fEtaMFTLow.value, fEtaMFTUp.value)) {
-      return false;
-    }
-    if (!inPhiRange(track.phi, fPhiMFTLow.value, fPhiMFTUp.value)) {
-      return false;
-    }
-    if (track.pt < fPtMFTLow.value) {
-      return false;
-    }
-    return true;
-  }
-
-  std::optional<PairPropagationResult> propagatePair(const o2::track::TrackParCovFwd& mchTrack,
-                                                      const MftTrackForPairing& mftTrack,
-                                                      bool isMixedEvent)
-  {
-    auto mchAtMftZ = propagateMchToZWithEnergyLoss(mchTrack, mftTrack.track.getZ());
-    if (!mchAtMftZ) {
-      return std::nullopt;
-    }
-
-    const float mchMomentumAtMftZ = static_cast<float>(mchAtMftZ->getP());
-    const float mchMomentumLoss = static_cast<float>(mchTrack.getP() - mchAtMftZ->getP());
-    if (fFillQaHistograms) {
-      if (isMixedEvent) {
-        registry.fill(HIST("mixedMchMidMftHelix/debugPMinusPPrime"), mchMomentumLoss);
-      } else {
-        registry.fill(HIST("allMchMidMftHelix/debugPMinusPPrime"), mchMomentumLoss);
-      }
-    }
-
-    auto mftAtMatching = propagateMftToMatchingWithMchMomentum(mftTrack.track, mchMomentumAtMftZ);
-    if (!mftAtMatching) {
-      return std::nullopt;
-    }
-    // Keep the existing QA scope: this histogram is filled only while processing mixed-event pairs.
-    if (isMixedEvent && fFillQaHistograms) {
-      registry.fill(HIST("allMchMidMftHelix/zMftAtMatching"), mftAtMatching->z);
-    }
-    if (!isSelectedMFTAtMatching(*mftAtMatching)) {
-      return std::nullopt;
-    }
-
-    return PairPropagationResult{makePropagatedTrackValues(*mchAtMftZ),
-                                 *mftAtMatching,
-                                 mchMomentumAtMftZ,
-                                 mchMomentumLoss};
-  }
-
-  template <class TTRACK>
-  McTrackOriginInfo getMcTrackOriginInfo(const TTRACK& track) const
-  {
-    McTrackOriginInfo info;
-    if (!track.has_mcParticle()) {
-      return info;
-    }
-
-    const auto& mcParticle = track.mcParticle();
-    info.hasMcParticle = true;
-    info.mcParticleId = mcParticle.globalIndex();
-    info.mcCollisionId = mcParticle.mcCollisionId();
-    info.pdgCode = mcParticle.pdgCode();
-    info.isMuon = std::abs(mcParticle.pdgCode()) == 13;
-    info.isPhysicalPrimary = mcParticle.isPhysicalPrimary();
-
-    const auto& motherParticles = mcParticle.template mothers_as<aod::McParticles>();
-    if (!motherParticles.empty()) {
-      const auto& motherParticle = motherParticles[0];
-      info.hasMotherMcParticle = true;
-      info.motherMcParticleId = motherParticle.globalIndex();
-      info.firstMotherPdgCode = motherParticle.pdgCode();
-    }
-    for (const auto& motherParticle : motherParticles) {
-      const int absMotherPdg = std::abs(motherParticle.pdgCode());
-      if (absMotherPdg == 211 || absMotherPdg == 321) {
-        info.hasPiKMother = true;
-        info.piKMotherMcParticleIds.insert(motherParticle.globalIndex());
-      }
-    }
-    return info;
-  }
-
-  bool hasMftMcParticleInMcCollision(const std::unordered_map<int64_t, std::unordered_set<int64_t>>& mftMcParticleIdsPerMcCollision,
-                                     int64_t mcCollisionId,
-                                     int64_t mcParticleId) const
-  {
-    if (mcCollisionId < 0 || mcParticleId < 0) {
-      return false;
-    }
-    const auto mftMcIdsInMcCollisionIt = mftMcParticleIdsPerMcCollision.find(mcCollisionId);
-    return mftMcIdsInMcCollisionIt != mftMcParticleIdsPerMcCollision.end() &&
-           mftMcIdsInMcCollisionIt->second.find(mcParticleId) != mftMcIdsInMcCollisionIt->second.end();
-  }
-
-  bool hasAnyMftMcParticleInMcCollision(const std::unordered_map<int64_t, std::unordered_set<int64_t>>& mftMcParticleIdsPerMcCollision,
-                                        int64_t mcCollisionId,
-                                        const std::unordered_set<int64_t>& mcParticleIds) const
-  {
-    if (mcCollisionId < 0 || mcParticleIds.empty()) {
-      return false;
-    }
-    const auto mftMcIdsInMcCollisionIt = mftMcParticleIdsPerMcCollision.find(mcCollisionId);
-    if (mftMcIdsInMcCollisionIt == mftMcParticleIdsPerMcCollision.end()) {
-      return false;
-    }
-    for (const auto mcParticleId : mcParticleIds) {
-      if (mftMcIdsInMcCollisionIt->second.find(mcParticleId) != mftMcIdsInMcCollisionIt->second.end()) {
-        return true;
-      }
-    }
-    return false;
-  }
-
-  McPairInfo makeMcPairInfo(const McTrackOriginInfo& mchOrigin,
-                            const MftTrackForPairing& mftTrack,
-                            int64_t collisionId,
-                            const std::unordered_map<int64_t, std::unordered_set<int64_t>>& mftMcParticleIdsPerCollision,
-                            const std::unordered_map<int64_t, std::unordered_set<int64_t>>& mftMcParticleIdsPerMcCollision) const
-  {
-    McPairInfo info;
-    info.mchMcPdgCode = mchOrigin.pdgCode;
-    info.mftMcPdgCode = mftTrack.mcOrigin.pdgCode;
-    info.mchFirstMotherPdgCode = mchOrigin.firstMotherPdgCode;
-    const bool isSameMcCollision = mchOrigin.hasMcParticle && mftTrack.hasMcParticle && mchOrigin.mcCollisionId >= 0 &&
-                                   mftTrack.mcOrigin.mcCollisionId >= 0 && mchOrigin.mcCollisionId == mftTrack.mcOrigin.mcCollisionId;
-    const bool isSameMcParticle = mchOrigin.hasMcParticle && mftTrack.hasMcParticle && mchOrigin.mcParticleId == mftTrack.mcParticleId;
-    const bool isCandidatePiKMotherMatch = mchOrigin.isMuon && mchOrigin.hasPiKMother && isSameMcCollision &&
-                                           mchOrigin.piKMotherMcParticleIds.find(mftTrack.mcParticleId) != mchOrigin.piKMotherMcParticleIds.end();
-    const bool isCorrectMatch = matchingcategory::isCorrectPair(isSameMcParticle, isCandidatePiKMotherMatch);
-
-    info.isCorrectMatch = isCorrectMatch ? 1 : 0;
-    const auto mftMcIdsIt = mftMcParticleIdsPerCollision.find(collisionId);
-    if (mftMcIdsIt != mftMcParticleIdsPerCollision.end() && mchOrigin.hasMcParticle) {
-      info.hasTrueMftForMchMuon = mftMcIdsIt->second.find(mchOrigin.mcParticleId) != mftMcIdsIt->second.end();
-    }
-    if (mchOrigin.hasMcParticle) {
-      info.hasTrueMftForMchMuonInMcCollision = hasMftMcParticleInMcCollision(mftMcParticleIdsPerMcCollision,
-                                                                            mchOrigin.mcCollisionId,
-                                                                            mchOrigin.mcParticleId);
-    }
-    if (mchOrigin.isMuon && mchOrigin.hasPiKMother) {
-      info.hasMotherMftForMchMuonInMcCollision = hasAnyMftMcParticleInMcCollision(mftMcParticleIdsPerMcCollision,
-                                                                                   mchOrigin.mcCollisionId,
-                                                                                   mchOrigin.piKMotherMcParticleIds);
-    }
-    info.hasNoTrueOrMotherMftForMchMuonInMcCollision = !info.hasTrueMftForMchMuonInMcCollision && !info.hasMotherMftForMchMuonInMcCollision;
-    info.sameMcCollision = isSameMcCollision;
-    info.matchCategory = matchingcategory::serialized(
-      matchingcategory::classifyPair(isCorrectMatch,
-                                     mchOrigin.hasMcParticle,
-                                     mftTrack.mcOrigin.hasMcParticle,
-                                     mchOrigin.mcCollisionId,
-                                     mftTrack.mcOrigin.mcCollisionId));
-    info.matchStudyCategory = matchingcategory::serialized(
-      matchingcategory::classifyStudyPair(isCorrectMatch,
-                                          mchOrigin.isMuon,
-                                          mchOrigin.hasPiKMother,
-                                          mchOrigin.isPhysicalPrimary,
-                                          info.hasTrueMftForMchMuonInMcCollision || info.hasMotherMftForMchMuonInMcCollision));
-    return info;
-  }
-
-  void fillMftMchPairTable(bool isMixedEvent,
-                           const McPairInfo& mcPairInfo,
-                           int64_t mchCollisionId,
-                           int nSelectedMchMidMuonsInCollision,
-                           int64_t mftCollisionId,
-                           int64_t mchTrackId,
-                           int64_t mftTrackId,
-                           const PropagatedTrackAtMatching& muonValues,
-                           const PropagatedTrackAtMatching& mchValuesAtMftLastDisk,
-                           float chi2MCH,
-                           const PropagatedTrackAtMatching& mftValues,
-                           const PropagatedTrackAtMatching& mftOwnMomentumValues,
-                           float chi2MFT,
-                           int nClustersMFT,
-                           float phiMftPVWithMchMomentum,
-                           float etaMftPVWithMchMomentum,
-                           float pMchAtMftZ,
-                           float pMchMinusPPrime)
-  {
-    if (!fFillMftMchPairTable) {
-      return;
-    }
-
-    mftMchMatchPairs(
-      isMixedEvent,
-      mcPairInfo.isCorrectMatch,
-      mcPairInfo.matchCategory,
-      mcPairInfo.matchStudyCategory,
-      mcPairInfo.mchMcPdgCode,
-      mcPairInfo.mftMcPdgCode,
-      mcPairInfo.mchFirstMotherPdgCode,
-      mcPairInfo.hasTrueMftForMchMuon,
-      mcPairInfo.hasTrueMftForMchMuonInMcCollision,
-      mcPairInfo.hasMotherMftForMchMuonInMcCollision,
-      mcPairInfo.hasNoTrueOrMotherMftForMchMuonInMcCollision,
-      mcPairInfo.sameMcCollision,
-      mchCollisionId,
-      nSelectedMchMidMuonsInCollision,
-      mftCollisionId,
-      mchTrackId,
-      mftTrackId,
-      muonValues.z,
-      muonValues.x,
-      muonValues.y,
-      muonValues.phi,
-      muonValues.tgl,
-      muonValues.invQPt,
-      muonValues.pt,
-      muonValues.eta,
-      pFromPtTgl(muonValues.pt, muonValues.tgl),
-      chi2MCH,
-      mchValuesAtMftLastDisk.invQPt,
-      mchValuesAtMftLastDisk.pt,
-      mftValues.z,
-      mftValues.x,
-      mftValues.y,
-      mftValues.phi,
-      mftValues.tgl,
-      mftValues.invQPt,
-      mftValues.pt,
-      mftValues.eta,
-      chi2MFT,
-      nClustersMFT,
-      mftOwnMomentumValues.invQPt,
-      mftOwnMomentumValues.pt,
-      mftOwnMomentumValues.eta,
-      mftOwnMomentumValues.invQPt,
-      mftOwnMomentumValues.pt,
-      phiMftPVWithMchMomentum,
-      etaMftPVWithMchMomentum,
-      pMchAtMftZ,
-      pMchMinusPPrime);
-  }
-
-  void fillMchMidVertexTable(int64_t mchCollisionId,
-                             int64_t mchTrackId,
-                             const PropagatedTrackAtMatching& vertexValues)
-  {
-    if (!fFillMchMidVertexTable) {
-      return;
-    }
-
-    mchMidVertexTracks(
-      mchCollisionId,
-      mchTrackId,
-      vertexValues.z,
-      vertexValues.x,
-      vertexValues.y,
-      vertexValues.phi,
-      vertexValues.tgl,
-      vertexValues.invQPt,
-      vertexValues.pt,
-      vertexValues.eta,
-      pFromPtTgl(vertexValues.pt, vertexValues.tgl));
->>>>>>> 562aa64bd (daily commit 20260808-1)
   }
 
   template <class T, class C>
-  bool passesPDcaCut(const T& mchTrack, const C& collision, double nSigmaPDCA)
+  bool pDCACut(const T& mchTrack, const C& collision, double nSigmaPDCA)
   {
-    static constexpr double sigmaPDCA23 = 80.;
-    static constexpr double sigmaPDCA310 = 54.;
-    static constexpr double relPRes = 0.0004;
-    static constexpr double slopeRes = 0.0005;
+    static const double sigmaPDCA23 = 80.;
+    static const double sigmaPDCA310 = 54.;
+    static const double relPRes = 0.0004;
+    static const double slopeRes = 0.0005;
 
     double thetaAbs = TMath::ATan(mchTrack.rAtAbsorberEnd() / 505.) * TMath::RadToDeg();
 
@@ -1042,7 +339,7 @@ struct mftMchMatcher {
   }
 
   template <class T, class C>
-  bool isGoodMuon(const T& mchTrack, const C& collision,
+  bool IsGoodMuon(const T& mchTrack, const C& collision,
                   double chi2Cut,
                   double pCut,
                   double pTCut,
@@ -1078,7 +375,7 @@ struct mftMchMatcher {
     }
 
     // pDCA cut
-    if (!passesPDcaCut(mchTrack, collision, nSigmaPdcaCut)) {
+    if (!pDCACut(mchTrack, collision, nSigmaPdcaCut)) {
       return false;
     }
 
@@ -1086,7 +383,7 @@ struct mftMchMatcher {
   }
 
   template <class T>
-  bool isGoodMft(const T& mftTrack,
+  bool IsGoodMFT(const T& mftTrack,
                  double chi2Cut,
                  double pTCut,
                  std::array<double, 2> etaCut)
@@ -1127,34 +424,6 @@ struct mftMchMatcher {
     mRunNumber = bc.runNumber();
   }
 
-  template <class TBCS>
-  void prepareRun(const TBCS& bcs)
-  {
-    if (bcs.size() == 0) {
-      return;
-    }
-    const auto bc = bcs.begin();
-    initCCDB(bc);
-    VarManager::SetMatchingPlane(fzMatching.value);
-  }
-
-  static void setMatchTypeLabels(TH1& histogram)
-  {
-    static constexpr std::array<const char*, 9> labels = {
-      "true (leading)",
-      "wrong (leading)",
-      "decay (leading)",
-      "fake (leading)",
-      "true (non leading)",
-      "wrong (non leading)",
-      "decay (non leading)",
-      "fake (non leading)",
-      "undefined"};
-    for (std::size_t i = 0; i < labels.size(); ++i) {
-      histogram.GetXaxis()->SetBinLabel(static_cast<int>(i) + 1, labels[i]);
-    }
-  }
-
   void init(o2::framework::InitContext&)
   {
     // Load geometry
@@ -1189,38 +458,16 @@ struct mftMchMatcher {
     hMatchType->GetXaxis()->SetBinLabel(8, "fake (non leading)");
     hMatchType->GetXaxis()->SetBinLabel(9, "undefined");
 
-    if (fFillQaHistograms) {
-      registry.add("eventSelection/vtxZAfterSelection", "Collision vertex z after event selection;V_{z} (cm)", {HistType::kTH1F, {{400, -20, 20, ""}}}, true);
-      registry.add("eventSelection/nSelectedMchMidMuonsPerCollision", "Selected MCH-MID muons per collision;N_{#mu}^{MCH-MID};collisions", {HistType::kTH1F, {{51, -0.5, 50.5, ""}}}, true);
-      registry.add("allMchMidMftHelix/nMchMidMuons", "MCH-MID muons with collision", {HistType::kTH1F, {{100, 0, 100, ""}}}, true);
-      registry.add("allMchMidMftHelix/nMftTracksPerMchMidMuon", "MFT tracks in the same collision per MCH-MID muon", {HistType::kTH1F, {{500, 0, 500, ""}}}, true);
-      registry.add("allMchMidMftHelix/zMchMidAtMatching", "MCH-MID z after helix propagation to matching plane;z (cm)", {HistType::kTH1F, {{1000, -200, 200, ""}}}, true);
-      registry.add("allMchMidMftHelix/zMftAtMatching", "MFT z after helix propagation to matching plane;z (cm)", {HistType::kTH1F, {{1000, -200, 200, ""}}}, true);
-      registry.add("allMchMidMftHelix/debugPMinusPPrime", "MCH p before propagation - MCH p after propagation to MFT z;p-p' (GeV/c)", {HistType::kTH1F, {{2000, -20, 20, ""}}}, true);
-      registry.add("mixedMchMidMftHelix/nMchMidMuons", "MCH-MID muons with mixed MFT collisions", {HistType::kTH1F, {{100, 0, 100, ""}}}, true);
-      registry.add("mixedMchMidMftHelix/nMixedMftTracksPerMchMidMuon", "Mixed-event MFT tracks per MCH-MID muon", {HistType::kTH1F, {{1000, 0, 1000, ""}}}, true);
-      registry.add("mixedMchMidMftHelix/nMixedCollisionsPerMchMidMuon", "Mixed collisions per MCH-MID muon", {HistType::kTH1F, {{100, 0, 100, ""}}}, true);
-      registry.add("mixedMchMidMftHelix/debugPMinusPPrime", "mixed MCH p before propagation - MCH p after propagation to MFT z;p-p' (GeV/c)", {HistType::kTH1F, {{2000, -20, 20, ""}}}, true);
-      registry.add("bestTimeCollision/nCompatibleCollisions", "Time-compatible collisions per MCH-MID muon;N compatible collisions", {HistType::kTH1F, {{50, 0, 50, ""}}}, true);
-      registry.add("bestTimeCollision/bestTimeResidual", "Best collision normalized time residual;#Delta t / #sigma_{t}", {HistType::kTH1F, {{400, -20, 20, ""}}}, true);
-      registry.add("bestTimeCollision/secondBestTimeResidual", "Second-best collision normalized time residual;#Delta t / #sigma_{t}", {HistType::kTH1F, {{400, -20, 20, ""}}}, true);
-      registry.add("bestTimeCollision/nMftTracksInBestCollision", "MFT tracks in selected best-time collision;N MFT tracks", {HistType::kTH1F, {{500, 0, 500, ""}}}, true);
-      registry.add("bestTimeCollision/hasMftInBestCollision", "Whether selected best-time collision has MFT tracks;has MFT", {HistType::kTH1F, {{2, 0, 2, ""}}}, true);
-      registry.add("bestTimeCollision/hasMftInOtherCompatibleCollision", "Whether non-best compatible collisions have MFT tracks;has MFT outside best", {HistType::kTH1F, {{2, 0, 2, ""}}}, true);
-      registry.add("bestTimeCollision/mftNCompatibleCollisions", "Time-compatible collisions per MFT track;N compatible collisions", {HistType::kTH1F, {{50, 0, 50, ""}}}, true);
-      registry.add("bestTimeCollision/mftBestTimeResidual", "MFT best collision normalized time residual;#Delta t / #sigma_{t}", {HistType::kTH1F, {{400, -20, 20, ""}}}, true);
-      registry.add("bestTimeCollision/mftSecondBestTimeResidual", "MFT second-best collision normalized time residual;#Delta t / #sigma_{t}", {HistType::kTH1F, {{400, -20, 20, ""}}}, true);
-    }
-
-    if (fFillFwdMatchMLCandidates && fFillQaHistograms) {
-      AxisSpec matchTypeAxis = {static_cast<int>(kMatchTypeUndefined) + 1, 0, static_cast<double>(kMatchTypeUndefined) + 1, ""};
-      auto hMatchType = std::get<std::shared_ptr<TH1>>(registry.add("matchType", "Match type", {HistType::kTH1F, {matchTypeAxis}}));
-      setMatchTypeLabels(*hMatchType);
->>>>>>> 562aa64bd (daily commit 20260808-1)
-
-      auto hMatchTypeAccepted = std::get<std::shared_ptr<TH1>>(registry.add("matchTypeAccepted", "Match type (accepted)", {HistType::kTH1F, {matchTypeAxis}}));
-      setMatchTypeLabels(*hMatchTypeAccepted);
-    }
+    auto hMatchTypeAccepted = std::get<std::shared_ptr<TH1>>(registry.add("matchTypeAccepted", "Match type (accepted)", {HistType::kTH1F, {matchTypeAxis}}));
+    hMatchTypeAccepted->GetXaxis()->SetBinLabel(1, "true (leading)");
+    hMatchTypeAccepted->GetXaxis()->SetBinLabel(2, "wrong (leading)");
+    hMatchTypeAccepted->GetXaxis()->SetBinLabel(3, "decay (leading)");
+    hMatchTypeAccepted->GetXaxis()->SetBinLabel(4, "fake (leading)");
+    hMatchTypeAccepted->GetXaxis()->SetBinLabel(5, "true (non leading)");
+    hMatchTypeAccepted->GetXaxis()->SetBinLabel(6, "wrong (non leading)");
+    hMatchTypeAccepted->GetXaxis()->SetBinLabel(7, "decay (non leading)");
+    hMatchTypeAccepted->GetXaxis()->SetBinLabel(8, "fake (non leading)");
+    hMatchTypeAccepted->GetXaxis()->SetBinLabel(9, "undefined");
   }
 
   template <typename TMuons>
@@ -1230,20 +477,19 @@ struct mftMchMatcher {
     std::unordered_map<int, std::pair<float, int>> mCandidates;
     for (const auto& muon : muons) {
       if (static_cast<int>(muon.trackType()) < 2) {
-        const auto muonID = muon.matchMCHTrackId();
-        const auto chi2 = muon.chi2MatchMCHMFT();
-        auto [candidate, inserted] = mCandidates.try_emplace(muonID, chi2, muon.globalIndex());
-        if (!inserted && chi2 < candidate->second.first) {
-          candidate->second = {chi2, muon.globalIndex()};
+        auto muonID = muon.matchMCHTrackId();
+        auto chi2 = muon.chi2MatchMCHMFT();
+        if (mCandidates.find(muonID) == mCandidates.end()) {
+          mCandidates[muonID] = {chi2, muon.globalIndex()};
+        } else {
+          if (chi2 < mCandidates[muonID].first) {
+            mCandidates[muonID] = {chi2, muon.globalIndex()};
+          }
         }
       }
     }
     for (const auto& pairCand : mCandidates) {
       fBestMatch[pairCand.second.second] = true;
-=======
-    for (const auto& candidateByMuon : mCandidates) {
-      fBestMatch.emplace(candidateByMuon.second.second);
->>>>>>> 562aa64bd (daily commit 20260808-1)
     }
   }
 
@@ -1284,14 +530,14 @@ struct mftMchMatcher {
         int64_t mftMcTrackIndex = mftMcParticle.globalIndex();
 
         if (muonMcTrackIndex == mftMcTrackIndex) {
-          matchablePairs.emplace_back(static_cast<int64_t>(muonTrack.globalIndex()),
-                                      static_cast<int64_t>(mftTrack.globalIndex()));
+          matchablePairs.emplace_back(std::make_pair(static_cast<int64_t>(muonTrack.globalIndex()),
+                                                     static_cast<int64_t>(mftTrack.globalIndex())));
         }
       }
     }
   }
 
-  static bool isPairedMuon(int64_t muonTrackId, const std::vector<std::pair<int64_t, int64_t>>& matchablePairs)
+  bool isPairedMuon(int64_t muonTrackId, const std::vector<std::pair<int64_t, int64_t>>& matchablePairs)
   {
     for (const auto& [id1, id2] : matchablePairs) {
       if (muonTrackId == id1) {
@@ -1299,9 +545,74 @@ struct mftMchMatcher {
       }
     }
     return false;
-    return std::any_of(matchablePairs.begin(), matchablePairs.end(), [muonTrackId](const auto& pair) {
-      return muonTrackId == pair.first;
-    });
+  }
+
+  template <class TMCH, class TMFTs>
+  bool isDecay(TMCH const& mchTrack, TMFTs const& mftTracks)
+  {
+    const auto& mchMcParticle = mchTrack.mcParticle();
+
+    const auto& mchMotherParticles = mchMcParticle.template mothers_as<aod::McParticles>();
+    if (mchMotherParticles.empty()) {
+      return false;
+    }
+    const auto& mchMotherParticle = mchMotherParticles[0];
+
+    // search for an MFT track that is associated to the MCH mother particle
+    for (const auto& mftTrack : mftTracks) {
+      // skip tracks that do not have an associated MC particle
+      if (!mftTrack.has_mcParticle()) {
+        continue;
+      }
+
+      if (mftTrack.mcParticle().globalIndex() == mchMotherParticle.globalIndex()) {
+        return true;
+      }
+    }
+
+    return false;
+  }
+
+  template <class TMUON, class TMUONS, class TMFTS>
+  MuonMatchType getMatchType(const TMUON& muonTrack,
+                             TMUONS const& /*muonTracks*/,
+                             TMFTS const& mftTracks,
+                             const std::vector<std::pair<int64_t, int64_t>>& matchablePairs,
+                             bool isBestMatch)
+  {
+    MuonMatchType result{kMatchTypeUndefined};
+
+    if (static_cast<int>(muonTrack.trackType()) > 2) {
+      return result;
+    }
+
+    auto const& mchTrack = muonTrack.template matchMCHTrack_as<TMUONS>();
+    auto const& mftTrack = muonTrack.template matchMFTTrack_as<TMFTS>();
+
+    if (!mchTrack.has_mcParticle() || !mftTrack.has_mcParticle()) {
+      // if either the MCH or the MFT tracks are fakes (not associated to any MC particles)
+      // we consider the match as fake
+      return (isBestMatch ? kMatchTypeFakeLeading : kMatchTypeFakeNonLeading);
+    }
+
+    bool isPaired = isPairedMuon(mchTrack.globalIndex(), matchablePairs);
+    std::pair<int64_t, int64_t> matchPair{mchTrack.globalIndex(), mftTrack.globalIndex()};
+    bool isTrueMatch = std::find(matchablePairs.begin(), matchablePairs.end(), matchPair) != matchablePairs.end();
+
+    if (isPaired) {
+      if (isTrueMatch) {
+        result = (isBestMatch) ? kMatchTypeTrueLeading : kMatchTypeTrueNonLeading;
+      } else {
+        result = isBestMatch ? kMatchTypeWrongLeading : kMatchTypeWrongNonLeading;
+      }
+    } else if (isDecay(mchTrack, mftTracks)) {
+      result = isBestMatch ? kMatchTypeDecayLeading : kMatchTypeDecayNonLeading;
+    } else {
+      result = isBestMatch ? kMatchTypeFakeLeading : kMatchTypeFakeNonLeading;
+    }
+
+    return result;
+  }
   template <class EVT, class BC, class TMUON, class TMFTS>
   int getMftMchMatchAttempts(EVT const& collisions,
                              BC const& bcs,
@@ -1335,410 +646,6 @@ struct mftMchMatcher {
     }
 
     return attempts;
-=======
-
-  float getMatchTypeSamplingFraction(MuonMatchType matchType) const
-  {
-    switch (matchType) {
-      case kMatchTypeTrueLeading:
-        return fSamplingFractionTrueLeadingMatches.value;
-      case kMatchTypeWrongLeading:
-        return fSamplingFractionWrongLeadingMatches.value;
-      case kMatchTypeDecayLeading:
-        return fSamplingFractionDecayLeadingMatches.value;
-      case kMatchTypeFakeLeading:
-        return fSamplingFractionFakeLeadingMatches.value;
-      case kMatchTypeTrueNonLeading:
-        return fSamplingFractionTrueNonLeadingMatches.value;
-      case kMatchTypeWrongNonLeading:
-        return fSamplingFractionWrongNonLeadingMatches.value;
-      case kMatchTypeDecayNonLeading:
-        return fSamplingFractionDecayNonLeadingMatches.value;
-      case kMatchTypeFakeNonLeading:
-        return fSamplingFractionFakeNonLeadingMatches.value;
-      default:
-        return 1.f;
-    }
-  }
-
-  template <bool isMc, bool withMFTCov, class TCOLLS, class TBCS, class TMUONS, class TMFTS, class TCOVS>
-  void fillMchMidMftHelixDeltas(TCOLLS const& collisions,
-                                 TBCS const& /*bcs*/,
-                                 TMUONS const& muonTracks,
-                                 TMFTS const& mftTracks,
-                                 TCOVS const& mftCovs)
-  {
-    std::unordered_set<int64_t> selectedCollisionIds;
-    for (const auto& collision : collisions) {
-      if (!isSelectedCollision(collision)) {
-        continue;
-      }
-      if (fFillQaHistograms) {
-        registry.fill(HIST("eventSelection/vtxZAfterSelection"), collision.posZ());
-      }
-      const auto collisionId = static_cast<int64_t>(collision.globalIndex());
-      selectedCollisionIds.insert(collisionId);
-    }
-
-    const bool fillSamePairs = fFillAllMchMidMftHelixDeltas && fFillMftMchPairTable;
-    const bool fillMixedPairs = fFillMixedMchMidMftHelixDeltas && fFillMftMchPairTable && fEventMixingDepth.value > 0;
-    const bool needMftCache = fillSamePairs || fillMixedPairs;
-    const bool needMftTrackCounts = fUseBestTimeCollision.value && fFillQaHistograms.value;
-
-    std::unordered_map<int64_t, std::vector<MftTrackForPairing>> mftsPerCollision;
-    std::unordered_map<int64_t, int> mftTrackCountsPerCollision;
-    std::unordered_map<int64_t, std::unordered_set<int64_t>> mftMcParticleIdsPerCollision;
-    std::unordered_map<int64_t, std::unordered_set<int64_t>> mftMcParticleIdsPerMcCollision;
-    std::unordered_map<int64_t, std::vector<PropagatedMchMidTrackAtMatching>> propagatedMchMidMuonsPerCollision;
-
-    if (needMftCache || needMftTrackCounts) {
-      // Build the MFT bookkeeping per collision. The expensive propagated cache is only needed for pair output.
-      for (const auto& mftTrack : mftTracks) {
-        if constexpr (isMc) {
-          if (mftTrack.has_mcParticle()) {
-            const auto& mftMcParticle = mftTrack.mcParticle();
-            if (mftMcParticle.mcCollisionId() >= 0) {
-              mftMcParticleIdsPerMcCollision[mftMcParticle.mcCollisionId()].insert(mftMcParticle.globalIndex());
-            }
-          }
-        }
-
-        if (!mftTrack.has_collision()) {
-          continue;
-        }
-        const auto bestMftCollision = chooseBestTimeCollision<TBCS>(mftTrack, collisions, selectedCollisionIds);
-        const int64_t selectedMftCollisionId = bestMftCollision.selectedCollisionId;
-        if (selectedCollisionIds.find(selectedMftCollisionId) == selectedCollisionIds.end()) {
-          continue;
-        }
-
-        if (fUseBestTimeCollision.value && fFillQaHistograms) {
-          registry.fill(HIST("bestTimeCollision/mftNCompatibleCollisions"), bestMftCollision.nCompatibleCollisions);
-          if (std::isfinite(bestMftCollision.bestTimeResidual)) {
-            registry.fill(HIST("bestTimeCollision/mftBestTimeResidual"), bestMftCollision.bestTimeResidual);
-          }
-          if (std::isfinite(bestMftCollision.secondBestTimeResidual)) {
-            registry.fill(HIST("bestTimeCollision/mftSecondBestTimeResidual"), bestMftCollision.secondBestTimeResidual);
-          }
-        }
-
-        if (needMftTrackCounts) {
-          ++mftTrackCountsPerCollision[selectedMftCollisionId];
-        }
-
-        if (!needMftCache) {
-          continue;
-        }
-
-        o2::track::TrackParCovFwd mftTrackPar;
-        if constexpr (withMFTCov) {
-          auto mftCovIndexIt = mftCovIndexes.find(mftTrack.globalIndex());
-          if (mftCovIndexIt == mftCovIndexes.end()) {
-            continue;
-          }
-          auto const& mftTrackCov = mftCovs.rawIteratorAt(mftCovIndexIt->second);
-          mftTrackPar = o2::aod::fwdtrackutils::getTrackParCovFwdShift(mftTrack, 0.f, mftTrackCov);
-        } else {
-          mftTrackPar = o2::aod::fwdtrackutils::getTrackParCovFwdShift(mftTrack, 0.f);
-        }
-
-        bool mftHasMcParticle = false;
-        int64_t mftMcParticleId = -1;
-        McTrackOriginInfo mftOrigin;
-        if constexpr (isMc) {
-          if (mftTrack.has_mcParticle()) {
-            mftOrigin = getMcTrackOriginInfo(mftTrack);
-            const auto& mftMcParticle = mftTrack.mcParticle();
-            mftHasMcParticle = true;
-            mftMcParticleId = mftMcParticle.globalIndex();
-            mftMcParticleIdsPerCollision[selectedMftCollisionId].insert(mftMcParticleId);
-          }
-        }
-
-        mftsPerCollision[selectedMftCollisionId].push_back({mftTrackPar,
-                                                            makePropagatedTrackValues(mftTrackPar),
-                                                            static_cast<int64_t>(mftTrack.globalIndex()),
-                                                            static_cast<float>(mftTrack.chi2()),
-                                                            static_cast<int>(mftTrack.nClusters()),
-                                                            mftHasMcParticle,
-                                                            mftMcParticleId,
-                                                            mftOrigin});
-      }
-    }
-
-    int nMchMidMuons = 0;
-    int nMixedMchMidMuons = 0;
-    std::unordered_map<int64_t, int> nSelectedMchMidMuonsPerCollision;
-    if (fFillMftMchPairTable || fFillQaHistograms) {
-      // Count every MCH-MID track that passes the matching-plane selection before emitting pair rows.
-      // Same-event pairs are written while looping over tracks, so the propagated cache alone is incomplete then.
-      for (const auto& muonTrack : muonTracks) {
-        if (static_cast<int>(muonTrack.trackType()) != 3 || !muonTrack.has_collision() ||
-            !hasRequiredMchCompatibleCollisionMultiplicity(muonTrack)) {
-          continue;
-        }
-        const auto bestTimeCollision = chooseBestTimeCollision<TBCS>(muonTrack, collisions, selectedCollisionIds);
-        const int64_t selectedMuonCollisionId = bestTimeCollision.selectedCollisionId;
-        if (selectedCollisionIds.find(selectedMuonCollisionId) == selectedCollisionIds.end()) {
-          continue;
-        }
-        auto muonRaw = o2::aod::fwdtrackutils::getTrackParCovFwdShift(muonTrack, 0.f, muonTrack);
-        auto muonAtMatching = propagateMchToZWithEnergyLoss(muonRaw, fzMatching.value);
-        if (!muonAtMatching) {
-          continue;
-        }
-        const auto muonValues = makePropagatedTrackValues(*muonAtMatching);
-        if (!isSelectedMchMidAtMatching(muonValues, muonTrack.rAtAbsorberEnd())) {
-          continue;
-        }
-        ++nSelectedMchMidMuonsPerCollision[selectedMuonCollisionId];
-      }
-    }
-    if (fFillQaHistograms) {
-      for (const auto selectedCollisionId : selectedCollisionIds) {
-        const auto nSelectedMuonIt = nSelectedMchMidMuonsPerCollision.find(selectedCollisionId);
-        const int nSelectedMuons = nSelectedMuonIt != nSelectedMchMidMuonsPerCollision.end() ? nSelectedMuonIt->second : 0;
-        registry.fill(HIST("eventSelection/nSelectedMchMidMuonsPerCollision"), nSelectedMuons);
-      }
-    }
-    for (const auto& muonTrack : muonTracks) {
-      if (static_cast<int>(muonTrack.trackType()) != 3) {
-        continue;
-      }
-      if (!muonTrack.has_collision()) {
-        continue;
-      }
-      if (!hasRequiredMchCompatibleCollisionMultiplicity(muonTrack)) {
-        continue;
-      }
-      const auto bestTimeCollision = chooseBestTimeCollision<TBCS>(muonTrack, collisions, selectedCollisionIds);
-      const int64_t selectedMuonCollisionId = bestTimeCollision.selectedCollisionId;
-      if (selectedCollisionIds.find(selectedMuonCollisionId) == selectedCollisionIds.end()) {
-        continue;
-      }
-
-      if (fUseBestTimeCollision.value && fFillQaHistograms) {
-        registry.fill(HIST("bestTimeCollision/nCompatibleCollisions"), bestTimeCollision.nCompatibleCollisions);
-        if (std::isfinite(bestTimeCollision.bestTimeResidual)) {
-          registry.fill(HIST("bestTimeCollision/bestTimeResidual"), bestTimeCollision.bestTimeResidual);
-        }
-        if (std::isfinite(bestTimeCollision.secondBestTimeResidual)) {
-          registry.fill(HIST("bestTimeCollision/secondBestTimeResidual"), bestTimeCollision.secondBestTimeResidual);
-        }
-        const auto nMftInBestIt = mftTrackCountsPerCollision.find(selectedMuonCollisionId);
-        const int nMftInBestCollision = nMftInBestIt != mftTrackCountsPerCollision.end() ? nMftInBestIt->second : 0;
-        registry.fill(HIST("bestTimeCollision/nMftTracksInBestCollision"), nMftInBestCollision);
-        registry.fill(HIST("bestTimeCollision/hasMftInBestCollision"), nMftInBestCollision > 0 ? 1.f : 0.f);
-
-        bool hasMftInOtherCompatibleCollision = false;
-        for (const auto compatibleCollisionId : muonTrack.compatibleCollIds()) {
-          const int64_t collisionId = static_cast<int64_t>(compatibleCollisionId);
-          if (collisionId == selectedMuonCollisionId) {
-            continue;
-          }
-          const auto nMftIt = mftTrackCountsPerCollision.find(collisionId);
-          if (nMftIt != mftTrackCountsPerCollision.end() && nMftIt->second > 0) {
-            hasMftInOtherCompatibleCollision = true;
-            break;
-          }
-        }
-        registry.fill(HIST("bestTimeCollision/hasMftInOtherCompatibleCollision"), hasMftInOtherCompatibleCollision ? 1.f : 0.f);
-      }
-
-      auto muonRaw = o2::aod::fwdtrackutils::getTrackParCovFwdShift(muonTrack, 0.f, muonTrack);
-      // The MCH-MID track itself is propagated once to the matching plane and cached for same- and mixed-event pairing.
-      auto muonAtMatching = propagateMchToZWithEnergyLoss(muonRaw, fzMatching.value);
-      if (!muonAtMatching) {
-        continue;
-      }
-      const auto muonValues = makePropagatedTrackValues(*muonAtMatching);
-      if (fFillQaHistograms) {
-        registry.fill(HIST("allMchMidMftHelix/zMchMidAtMatching"), muonValues.z);
-      }
-      if (!isSelectedMchMidAtMatching(muonValues, muonTrack.rAtAbsorberEnd())) {
-        continue;
-      }
-      const auto nSelectedMchMidMuonIt = nSelectedMchMidMuonsPerCollision.find(selectedMuonCollisionId);
-      const int nSelectedMchMidMuonsInCollision = nSelectedMchMidMuonIt != nSelectedMchMidMuonsPerCollision.end() ? nSelectedMchMidMuonIt->second : 0;
-      McTrackOriginInfo mchOrigin;
-      if constexpr (isMc) {
-        mchOrigin = getMcTrackOriginInfo(muonTrack);
-      }
-      propagatedMchMidMuonsPerCollision[selectedMuonCollisionId].push_back({muonRaw, muonValues, static_cast<int64_t>(muonTrack.globalIndex()), static_cast<float>(muonTrack.chi2())});
-
-      if (fFillMchMidVertexTable) {
-        const auto& collision = collisions.rawIteratorAt(selectedMuonCollisionId);
-        auto muonAtVertex = propagateMchToCollisionVertex(muonRaw, collision);
-        if (muonAtVertex) {
-          fillMchMidVertexTable(selectedMuonCollisionId,
-                                static_cast<int64_t>(muonTrack.globalIndex()),
-                                makePropagatedTrackValues(*muonAtVertex));
-        }
-      }
-
-      if (fillSamePairs) {
-        auto mftTracksInCollision = mftsPerCollision.find(selectedMuonCollisionId);
-        if (mftTracksInCollision != mftsPerCollision.end()) {
-          ++nMchMidMuons;
-          int nSelectedMftTracks = 0;
-          for (const auto& mftTrackForPair : mftTracksInCollision->second) {
-            auto pairPropagation = propagatePair(muonRaw, mftTrackForPair, false);
-            if (!pairPropagation) {
-              continue;
-            }
-            ++nSelectedMftTracks;
-
-            McPairInfo mcPairInfo;
-            if constexpr (isMc) {
-              mcPairInfo = makeMcPairInfo(mchOrigin,
-                                          mftTrackForPair,
-                                          selectedMuonCollisionId,
-                                          mftMcParticleIdsPerCollision,
-                                          mftMcParticleIdsPerMcCollision);
-            }
-            const auto& muonCollision = collisions.rawIteratorAt(selectedMuonCollisionId);
-            auto mftAtPVWithMchMomentum = propagateMftToZWithMchMomentum(mftTrackForPair.track,
-                                                                         pairPropagation->mchMomentumAtMftZ,
-                                                                         static_cast<float>(muonCollision.posZ()));
-            const float phiMftPVWithMchMomentum = mftAtPVWithMchMomentum ? mftAtPVWithMchMomentum->phi : std::numeric_limits<float>::quiet_NaN();
-            const float etaMftPVWithMchMomentum = mftAtPVWithMchMomentum ? mftAtPVWithMchMomentum->eta : std::numeric_limits<float>::quiet_NaN();
-            fillMftMchPairTable(false,
-                                mcPairInfo,
-                                selectedMuonCollisionId,
-                                nSelectedMchMidMuonsInCollision,
-                                selectedMuonCollisionId,
-                                static_cast<int64_t>(muonTrack.globalIndex()),
-                                mftTrackForPair.globalIndex,
-                                muonValues,
-                                pairPropagation->mchValuesAtMftLastDisk,
-                                static_cast<float>(muonTrack.chi2()),
-                                pairPropagation->mftValuesAtMatching,
-                                mftTrackForPair.valuesAtMftLastDisk,
-                                mftTrackForPair.chi2,
-                                mftTrackForPair.nClusters,
-                                phiMftPVWithMchMomentum,
-                                etaMftPVWithMchMomentum,
-                                pairPropagation->mchMomentumAtMftZ,
-                                pairPropagation->mchMomentumLoss);
-          }
-          if (fFillQaHistograms) {
-            registry.fill(HIST("allMchMidMftHelix/nMftTracksPerMchMidMuon"), static_cast<float>(nSelectedMftTracks));
-          }
-        }
-      }
-    }
-
-    if (fillMixedPairs) {
-      using MixingBinning = ColumnBinningPolicy<aod::collision::PosZ>;
-      MixingBinning mixingBinning{{fEventMixingVtxBins}, true};
-      std::unordered_map<int64_t, std::vector<int>> nMixedCollisionsPerMuon;
-      std::unordered_map<int64_t, std::vector<int>> nMixedMftTracksPerMuon;
-
-      // Mix MCH-MID tracks from one selected collision with MFT tracks from another selected collision in the same z-vertex bin.
-      auto fillMixedPair = [&](int64_t muonCollisionId, int64_t mftCollisionId) {
-        auto muonsInCollision = propagatedMchMidMuonsPerCollision.find(muonCollisionId);
-        if (muonsInCollision == propagatedMchMidMuonsPerCollision.end()) {
-          return;
-        }
-        auto mixedMftTracks = mftsPerCollision.find(mftCollisionId);
-        if (mixedMftTracks == mftsPerCollision.end()) {
-          return;
-        }
-
-        auto& mixedCollisionCounts = nMixedCollisionsPerMuon[muonCollisionId];
-        auto& mixedMftTrackCounts = nMixedMftTracksPerMuon[muonCollisionId];
-        if (mixedCollisionCounts.empty()) {
-          mixedCollisionCounts.resize(muonsInCollision->second.size(), 0);
-          mixedMftTrackCounts.resize(muonsInCollision->second.size(), 0);
-        }
-
-        for (std::size_t iMuon = 0; iMuon < muonsInCollision->second.size(); ++iMuon) {
-          ++mixedCollisionCounts[iMuon];
-          const auto& muonTrackAtMatching = muonsInCollision->second[iMuon];
-          int nSelectedMixedMftTracks = 0;
-          for (const auto& mftTrackForPair : mixedMftTracks->second) {
-            auto pairPropagation = propagatePair(muonTrackAtMatching.rawTrack, mftTrackForPair, true);
-            if (!pairPropagation) {
-              continue;
-            }
-            ++nSelectedMixedMftTracks;
-            const auto& muonCollision = collisions.rawIteratorAt(muonCollisionId);
-            auto mftAtPVWithMchMomentum = propagateMftToZWithMchMomentum(mftTrackForPair.track,
-                                                                         pairPropagation->mchMomentumAtMftZ,
-                                                                         static_cast<float>(muonCollision.posZ()));
-            const float phiMftPVWithMchMomentum = mftAtPVWithMchMomentum ? mftAtPVWithMchMomentum->phi : std::numeric_limits<float>::quiet_NaN();
-            const float etaMftPVWithMchMomentum = mftAtPVWithMchMomentum ? mftAtPVWithMchMomentum->eta : std::numeric_limits<float>::quiet_NaN();
-            const auto nSelectedMchMidMuonIt = nSelectedMchMidMuonsPerCollision.find(muonCollisionId);
-            const int nSelectedMchMidMuonsInCollision = nSelectedMchMidMuonIt != nSelectedMchMidMuonsPerCollision.end() ? nSelectedMchMidMuonIt->second : 0;
-            fillMftMchPairTable(true,
-                                McPairInfo{},
-                                muonCollisionId,
-                                nSelectedMchMidMuonsInCollision,
-                                mftCollisionId,
-                                muonTrackAtMatching.globalIndex,
-                                mftTrackForPair.globalIndex,
-                                muonTrackAtMatching.values,
-                                pairPropagation->mchValuesAtMftLastDisk,
-                                muonTrackAtMatching.chi2,
-                                pairPropagation->mftValuesAtMatching,
-                                mftTrackForPair.valuesAtMftLastDisk,
-                                mftTrackForPair.chi2,
-                                mftTrackForPair.nClusters,
-                                phiMftPVWithMchMomentum,
-                                etaMftPVWithMchMomentum,
-                                pairPropagation->mchMomentumAtMftZ,
-                                pairPropagation->mchMomentumLoss);
-          }
-          mixedMftTrackCounts[iMuon] += nSelectedMixedMftTracks;
-        }
-      };
-
-      for (const auto& [collision1, collision2] : soa::selfCombinations(mixingBinning, fEventMixingDepth.value, -1, collisions, collisions)) {
-        if (!isSelectedCollision(collision1) || !isSelectedCollision(collision2)) {
-          continue;
-        }
-
-        const auto collisionId1 = static_cast<int64_t>(collision1.globalIndex());
-        const auto collisionId2 = static_cast<int64_t>(collision2.globalIndex());
-        if (collisionId1 == collisionId2) {
-          continue;
-        }
-
-        if (fMinMixingBcGap.value > 0) {
-          const auto bc1 = collision1.template bc_as<TBCS>();
-          const auto bc2 = collision2.template bc_as<TBCS>();
-          const auto bcGap = std::abs(static_cast<int64_t>(bc1.globalBC()) - static_cast<int64_t>(bc2.globalBC()));
-          if (bcGap < fMinMixingBcGap.value) {
-            continue;
-          }
-        }
-
-        fillMixedPair(collisionId1, collisionId2);
-        fillMixedPair(collisionId2, collisionId1);
-      }
-
-      for (const auto& [collisionId, mixedCollisionCounts] : nMixedCollisionsPerMuon) {
-        const auto mftTrackCountsIt = nMixedMftTracksPerMuon.find(collisionId);
-        if (mftTrackCountsIt == nMixedMftTracksPerMuon.end()) {
-          continue;
-        }
-        for (std::size_t iMuon = 0; iMuon < mixedCollisionCounts.size(); ++iMuon) {
-          if (mixedCollisionCounts[iMuon] <= 0) {
-            continue;
-          }
-          ++nMixedMchMidMuons;
-          if (fFillQaHistograms) {
-            registry.fill(HIST("mixedMchMidMftHelix/nMixedMftTracksPerMchMidMuon"), mftTrackCountsIt->second[iMuon]);
-            registry.fill(HIST("mixedMchMidMftHelix/nMixedCollisionsPerMchMidMuon"), mixedCollisionCounts[iMuon]);
-          }
-        }
-      }
-    }
-
-    if (fFillQaHistograms) {
-      registry.fill(HIST("allMchMidMftHelix/nMchMidMuons"), nMchMidMuons);
-      registry.fill(HIST("mixedMchMidMftHelix/nMchMidMuons"), nMixedMchMidMuons);
-    }
   }
 
   template <bool isMc, class TCOLLS, class TBCS, class TMUONS, class TMFTS, class TCOVS>
@@ -1760,15 +667,11 @@ struct mftMchMatcher {
     }
     registry.get<TH1>(HIST("acceptedEvents"))->Fill(1);
 
-    if (fFillFwdMatchMLCandidates && (fKeepBestMatch.value || isMc)) {
-      fillBestMuonMatches(muonTracks);
-    }
+    fillBestMuonMatches(muonTracks);
 
     std::vector<std::pair<int64_t, int64_t>> matchablePairs;
     if constexpr (isMc) {
-      if (fFillFwdMatchMLCandidates) {
-        fillMatchablePairs(muonTracks, mftTracks, matchablePairs);
-      }
+      fillMatchablePairs(muonTracks, mftTracks, matchablePairs);
     }
 
     mftCovIndexes.clear();
@@ -1777,15 +680,6 @@ struct mftMchMatcher {
     }
 
     for (const auto& muon : muonTracks) {
-    if (((fFillAllMchMidMftHelixDeltas || fFillMixedMchMidMftHelixDeltas) && fFillMftMchPairTable) || fFillMchMidVertexTable) {
-      fillMchMidMftHelixDeltas<isMc, withMFTCov>(collisions, bcs, muonTracks, mftTracks, mftCovs);
-    }
-
-    if (!fFillFwdMatchMLCandidates) {
-      return;
-    }
-
-    for (auto muon : muonTracks) {
       // only consider global MFT-MCH-MID matches
       if (static_cast<int>(muon.trackType()) != 0) {
         continue;
@@ -1805,14 +699,11 @@ struct mftMchMatcher {
       auto bc_coll = collision.template bc_as<TBCS>();
 
       auto muontrack = muon.template matchMCHTrack_as<TMUONS>();
-      if (!hasRequiredMchCompatibleCollisionMultiplicity(muontrack)) {
-        continue;
-      }
       auto mfttrack = muon.template matchMFTTrack_as<TMFTS>();
       auto const& mfttrackcov = mftCovs.rawIteratorAt(mftCovIndexes[mfttrack.globalIndex()]);
 
-      const auto muonTime = muontrack.trackTime() + bc_coll.globalBC() * o2::constants::lhc::LHCBunchSpacingNS;
-      const auto mftTime = mfttrack.trackTime() + bc_coll.globalBC() * o2::constants::lhc::LHCBunchSpacingNS;
+      auto muonTime = muontrack.trackTime() + bc_coll.globalBC() * o2::constants::lhc::LHCBunchSpacingNS;
+      auto mftTime = mfttrack.trackTime() + bc_coll.globalBC() * o2::constants::lhc::LHCBunchSpacingNS;
 
       o2::track::TrackParCovFwd mftprop = VarManager::FwdToTrackPar(mfttrack, mfttrackcov);
       o2::dataformats::GlobalFwdTrack muonprop = trackToGlobalFwd(muontrack, muontrack);
@@ -1822,43 +713,16 @@ struct mftMchMatcher {
       }
       auto muonpropCov = muonprop.getCovariances();
       auto mftpropCov = mftprop.getCovariances();
-      const auto muonCovValues = flattenCovariance(muonprop.getCovariances());
 
-      float mftX = mfttrack.x();
-      float mftY = mfttrack.y();
-      float mftPhi = mfttrack.phi();
-      float mftTgl = mfttrack.tgl();
-      float mftInvQPt = mfttrack.signed1Pt();
-      CovarianceValues mftCovValues;
-      mftCovValues.fill(-999.f);
-
-      if constexpr (withMFTCov) {
-        auto mftCovIndexIt = mftCovIndexes.find(mfttrack.globalIndex());
-        if (mftCovIndexIt == mftCovIndexes.end()) {
-          continue;
-        }
-        auto const& mfttrackcov = mftCovs.rawIteratorAt(mftCovIndexIt->second);
-        o2::track::TrackParCovFwd mftprop = VarManager::FwdToTrackPar(mfttrack, mfttrackcov);
-        if (fzMatching.value < 0.) {
-          mftprop = VarManager::PropagateFwd(mfttrack, mfttrackcov, fzMatching.value);
-        }
-        mftX = mftprop.getX();
-        mftY = mftprop.getY();
-        mftPhi = mftprop.getPhi();
-        mftTgl = mftprop.getTgl();
-        mftInvQPt = mftprop.getInvQPt();
-        mftCovValues = flattenCovariance(mftprop.getCovariances());
-      }
-
-      if (!isGoodMuon(muontrack, collision, fTrackChi2MchUp, fPMchLow, fPtMchLow, {fEtaMFTLow, fEtaMFTUp}, {fRabsLow, fRabsUp}, fSigmaPdcaUp)) {
+      if (!IsGoodMuon(muontrack, collision, fTrackChi2MchUp, fPMchLow, fPtMchLow, {fEtaMFTLow, fEtaMFTUp}, {fRabsLow, fRabsUp}, fSigmaPdcaUp)) {
         continue;
       }
 
       // at this level we consider all the matching candidates, regardless of the MFT tracks quality
       // MFT track quality cuts should be applied only after having selected the best candidate
-      // if (!isGoodMft(mfttrack, fTrackChi2MFTUp, fPtMFTLow, {fEtaMFTLow, fEtaMFTUp})) {
+      // if (!IsGoodMFT(mfttrack, fTrackChi2MFTUp, fPtMFTLow, {fEtaMFTLow, fEtaMFTUp})){
       //  continue;
-      // }
+      //}
 
       bool IsAmbig = (muon.compatibleCollIds().size() != 1);
       int MFTMult = collision.mftNtracks();
@@ -1870,34 +734,58 @@ struct mftMchMatcher {
       } else {
         matchAttempts = matchAttemptsIt->second;
       }
-      const bool isAmbiguous = muon.compatibleCollIds().size() != 1;
-      constexpr int mftMultiplicity = -1;
 
       auto matchType = kMatchTypeUndefined;
       if constexpr (isMc) {
         matchType = getMatchType(muon, muonTracks, mftTracks, matchablePairs, isBestMatch);
       }
-      const bool isSignal = (matchType == kMatchTypeTrueLeading) || (matchType == kMatchTypeTrueNonLeading);
+      bool isSignal = (matchType == kMatchTypeTrueLeading) || (matchType == kMatchTypeTrueNonLeading);
 
       int mcMaskMuon = 0;
       int mcMaskMft = 0;
-      int mcMaskGlob = 0;
+      int ncMaskGlob = 0;
       if constexpr (isMc) {
         mcMaskMuon = muontrack.mcMask();
         mcMaskMft = mfttrack.mcMask();
-        mcMaskGlob = muon.mcMask();
+        ncMaskGlob = muon.mcMask();
       }
 
-      if (fFillQaHistograms) {
-        registry.get<TH1>(HIST("matchType"))->Fill(static_cast<int>(matchType));
-      }
+      registry.get<TH1>(HIST("matchType"))->Fill(static_cast<int>(matchType));
 
       // skipp odd/even BCs if requested
       if (fSamplingBcOddness.value >= 0 && (static_cast<int>((bc_coll.globalBC() % 2)) != fSamplingBcOddness.value)) {
         continue;
       }
 
-      const float matchTypeSamplingFraction = getMatchTypeSamplingFraction(matchType);
+      float matchTypeSamplingFraction = 1.0;
+      switch (matchType) {
+        case kMatchTypeTrueLeading:
+          matchTypeSamplingFraction = fSamplingFractionTrueLeadingMatches;
+          break;
+        case kMatchTypeTrueNonLeading:
+          matchTypeSamplingFraction = fSamplingFractionTrueNonLeadingMatches;
+          break;
+        case kMatchTypeWrongLeading:
+          matchTypeSamplingFraction = fSamplingFractionWrongLeadingMatches;
+          break;
+        case kMatchTypeWrongNonLeading:
+          matchTypeSamplingFraction = fSamplingFractionWrongNonLeadingMatches;
+          break;
+        case kMatchTypeDecayLeading:
+          matchTypeSamplingFraction = fSamplingFractionDecayLeadingMatches;
+          break;
+        case kMatchTypeDecayNonLeading:
+          matchTypeSamplingFraction = fSamplingFractionDecayNonLeadingMatches;
+          break;
+        case kMatchTypeFakeLeading:
+          matchTypeSamplingFraction = fSamplingFractionFakeLeadingMatches;
+          break;
+        case kMatchTypeFakeNonLeading:
+          matchTypeSamplingFraction = fSamplingFractionFakeNonLeadingMatches;
+          break;
+        default:
+          break;
+      }
 
       if (matchTypeSamplingFraction < 1.0) {
         double rnd = mDistribution(mGenerator);
@@ -1906,9 +794,7 @@ struct mftMchMatcher {
         }
       }
 
-      if (fFillQaHistograms) {
-        registry.get<TH1>(HIST("matchTypeAccepted"))->Fill(static_cast<int>(matchType));
-      }
+      registry.get<TH1>(HIST("matchTypeAccepted"))->Fill(static_cast<int>(matchType));
 
       fwdMatchMLCandidates(
         muonprop.getX(),
@@ -1941,26 +827,6 @@ struct mftMchMatcher {
         mftprop.getPhi(),
         mftprop.getTgl(),
         mftprop.getInvQPt(),
-        muonCovValues[0],
-        muonCovValues[1],
-        muonCovValues[2],
-        muonCovValues[3],
-        muonCovValues[4],
-        muonCovValues[5],
-        muonCovValues[6],
-        muonCovValues[7],
-        muonCovValues[8],
-        muonCovValues[9],
-        muonCovValues[10],
-        muonCovValues[11],
-        muonCovValues[12],
-        muonCovValues[13],
-        muonCovValues[14],
-        mftX,
-        mftY,
-        mftPhi,
-        mftTgl,
-        mftInvQPt,
         mftTime,
         mfttrack.trackTimeRes(),
         mfttrack.chi2(),
@@ -1988,11 +854,9 @@ struct mftMchMatcher {
         IsAmbig,
         MFTMult,
         matchAttempts,
-        isAmbiguous,
-        mftMultiplicity,
         mcMaskMuon,
         mcMaskMft,
-        mcMaskGlob,
+        ncMaskGlob,
         static_cast<int>(matchType),
         isSignal);
     }
@@ -2012,23 +876,9 @@ struct mftMchMatcher {
     }
 
     fillTable<true>(collisions, bcs, muonTracks, mftTracks, mftCovs);
-    prepareRun(bcs);
-    fillTable<true, true>(collisions, bcs, muonTracks, mftTracks, mftCovs);
   }
 
   PROCESS_SWITCH(mftMchMatcher, processMC, "process_MC", true);
-
-  void processMCNoMFTCov(MyEvents const& collisions,
-                         aod::BCsWithTimestamps const& bcs,
-                         MyMuonsMC const& muonTracks,
-                         MyMFTsMC const& mftTracks,
-                         aod::McParticles const& /*mcParticles*/)
-  {
-    prepareRun(bcs);
-    fillTable<true, false>(collisions, bcs, muonTracks, mftTracks, nullptr);
-  }
-
-  PROCESS_SWITCH(mftMchMatcher, processMCNoMFTCov, "process_MC_NoMFTCov", false);
 
   void processRD(MyEvents const& collisions,
                  aod::BCsWithTimestamps const& bcs,
@@ -2046,24 +896,6 @@ struct mftMchMatcher {
   }
 
   PROCESS_SWITCH(mftMchMatcher, processRD, "process_RD", false);
-=======
-    prepareRun(bcs);
-    fillTable<false, true>(collisions, bcs, muonTracks, mftTracks, mftCovs);
-  }
-
-  PROCESS_SWITCH(mftMchMatcher, processRD, "process_RD", false);
-
-  void processRDNoMFTCov(MyEvents const& collisions,
-                         aod::BCsWithTimestamps const& bcs,
-                         MyMuonsWithCov const& muonTracks,
-                         MyMFTs const& mftTracks)
-  {
-    prepareRun(bcs);
-    fillTable<false, false>(collisions, bcs, muonTracks, mftTracks, nullptr);
-  }
-
-  PROCESS_SWITCH(mftMchMatcher, processRDNoMFTCov, "process_RD_NoMFTCov", false);
->>>>>>> 562aa64bd (daily commit 20260808-1)
 };
 
 WorkflowSpec defineDataProcessing(ConfigContext const& context)

@@ -83,7 +83,9 @@ o2physics_add_dpl_workflow(mft-track-pair-mass
 
 o2physics_add_dpl_workflow(mft-standalone-track-qa
                     SOURCES mftStandaloneTrackQa.cxx
-                    PUBLIC_LINK_LIBRARIES O2::Framework O2Physics::AnalysisCore
+                    PUBLIC_LINK_LIBRARIES O2::Framework O2Physics::AnalysisCore O2::CCDB
+                                          O2::DataFormatsParameters O2::ReconstructionDataFormats
+                                          O2::DetectorsBase O2::Field
                     COMPONENT_NAME Analysis)
 
 o2physics_add_dpl_workflow(mc-forward-muon-vz
@@ -102,6 +104,22 @@ o2physics_add_dpl_workflow(global-track-matching-study
                                           O2::DataFormatsParameters O2::DetectorsBase
                                           O2::GlobalTracking O2::MCHTracking
                                           O2::ReconstructionDataFormats
+                    COMPONENT_NAME Analysis)
+
+o2physics_add_dpl_workflow(global-track-dimuon-study
+                    SOURCES globalTrackDimuonStudy.cxx
+                    PUBLIC_LINK_LIBRARIES O2::Framework O2Physics::AnalysisCore
+                    COMPONENT_NAME Analysis)
+
+o2physics_add_dpl_workflow(dimuon-mc-resolution
+                    SOURCES dimuon_mc.cxx
+                    PUBLIC_LINK_LIBRARIES O2::Framework O2::DetectorsBase
+                                          O2Physics::AnalysisCore O2Physics::PWGEMDileptonCore
+                    COMPONENT_NAME Analysis)
+
+o2physics_add_dpl_workflow(check-global-track
+                    SOURCES check_globalTrack.cxx
+                    PUBLIC_LINK_LIBRARIES O2::Framework O2Physics::AnalysisCore
                     COMPONENT_NAME Analysis)
 
 o2physics_add_dpl_workflow(qa-cpv
