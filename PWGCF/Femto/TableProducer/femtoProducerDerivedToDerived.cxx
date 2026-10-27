@@ -16,8 +16,10 @@
 #include "PWGCF/Femto/Core/cascadeBuilder.h"
 #include "PWGCF/Femto/Core/collisionBuilder.h"
 #include "PWGCF/Femto/Core/kinkBuilder.h"
+#include "PWGCF/Femto/Core/mcBuilder.h"
 #include "PWGCF/Femto/Core/partitions.h"
 #include "PWGCF/Femto/Core/trackBuilder.h"
+#include "PWGCF/Femto/Core/twoTrackResonanceBuilder.h"
 #include "PWGCF/Femto/Core/v0Builder.h"
 #include "PWGCF/Femto/DataModel/FemtoTables.h"
 
@@ -35,19 +37,28 @@ struct FemtoProducerDerivedToDerived {
 
   // setup tables
   using FemtoCollisions = o2::soa::Join<o2::aod::FCols, o2::aod::FColMasks>;
-  using FemtoCollision = FemtoCollisions::iterator;
 
   using FilteredFemtoCollisions = o2::soa::Filtered<FemtoCollisions>;
   using FilteredFemtoCollision = FilteredFemtoCollisions::iterator;
+
+  using FemtoMcCollisions = o2::soa::Join<FemtoCollisions, o2::aod::FColLabels>;
+  using FilteredFemtoMcCollisions = o2::soa::Filtered<FemtoMcCollisions>;
 
   using FemtoTracks = o2::soa::Join<o2::aod::FTracks, o2::aod::FTrackMasks>;
   using FemtoTracksWithMass = o2::soa::Join<FemtoTracks, o2::aod::FTrackMass>;
   using FemtoLambdas = o2::soa::Join<o2::aod::FLambdas, o2::aod::FLambdaMasks>;
   using FemtoK0shorts = o2::soa::Join<o2::aod::FK0shorts, o2::aod::FK0shortMasks>;
+  using FemtoRho0s = o2::soa::Join<o2::aod::FRho0s, o2::aod::FRho0Masks>;
+  using FemtoPhis = o2::soa::Join<o2::aod::FPhis, o2::aod::FPhiMasks>;
   using FemtoXis = o2::soa::Join<o2::aod::FXis, o2::aod::FXiMasks>;
   using FemtoOmegas = o2::soa::Join<o2::aod::FOmegas, o2::aod::FOmegaMasks>;
   using FemtoSigma = o2::soa::Join<o2::aod::FSigmas, o2::aod::FSigmaMasks>;
   using FemtoSigmaPlus = o2::soa::Join<o2::aod::FSigmaPlus, o2::aod::FSigmaPlusMasks>;
+
+  using FemtoMcTracks = o2::soa::Join<FemtoTracks, o2::aod::FTrackLabels>;
+  using FemtoMcSigma = o2::soa::Join<FemtoSigma, o2::aod::FSigmaLabels>;
+  using FemtoMcSigmaPlus = o2::soa::Join<FemtoSigmaPlus, o2::aod::FSigmaPlusLabels>;
+  using FemtoMcParticles = o2::soa::Join<o2::aod::FMcParticles, o2::aod::FMcMotherLabels>;
 
   o2::framework::SliceCache cache;
 
@@ -68,6 +79,10 @@ struct FemtoProducerDerivedToDerived {
   o2::framework::Partition<FemtoTracks> trackPartition2 = MAKE_TRACK_PARTITION(trackSelections2);
   o2::framework::Preslice<FemtoTracks> perColTracks = o2::aod::femtobase::stored::fColId;
 
+  o2::framework::Partition<FemtoTracksWithMass> trackWithMassPartition1 = MAKE_TRACK_PARTITION_WITH_MASS(trackSelections1);
+  o2::framework::Partition<FemtoTracksWithMass> trackWithMassPartition2 = MAKE_TRACK_PARTITION_WITH_MASS(trackSelections2);
+  o2::framework::Preslice<FemtoTracksWithMass> perColTracksWithMass = o2::aod::femtobase::stored::fColId;
+
   // v0 builder
   v0builder::V0BuilderDerivedToDerived v0Builder;
   v0builder::V0BuilderDerivedToDerivedProducts v0BuilderProducts;
@@ -80,6 +95,19 @@ struct FemtoProducerDerivedToDerived {
   v0builder::ConfK0shortSelection1 k0shortSelection1;
   o2::framework::Partition<FemtoK0shorts> k0shortPartition = MAKE_K0SHORT_PARTITION(k0shortSelection1);
   o2::framework::Preslice<FemtoK0shorts> perColK0shorts = o2::aod::femtobase::stored::fColId;
+
+  // two-track resonance builder
+  twotrackresonancebuilder::TwoTrackResonanceBuilderDerivedToDerived resonanceBuilder;
+  twotrackresonancebuilder::TwoTrackResonanceBuilderDerivedToDerivedProducts resonanceBuilderProducts;
+  twotrackresonancebuilder::ConfTwoTrackResonanceTablesDerivedToDerived confResonanceBuilder;
+
+  twotrackresonancebuilder::ConfRho0Selection rho0Selection;
+  o2::framework::Partition<FemtoRho0s> rho0Partition = MAKE_RESONANCE_0_PARTITON(rho0Selection);
+  o2::framework::Preslice<FemtoRho0s> perColRho0s = o2::aod::femtobase::stored::fColId;
+
+  twotrackresonancebuilder::ConfPhiSelection phiSelection;
+  o2::framework::Partition<FemtoPhis> phiPartition = MAKE_RESONANCE_0_PARTITON(phiSelection);
+  o2::framework::Preslice<FemtoPhis> perColPhis = o2::aod::femtobase::stored::fColId;
 
   // kink builder
   kinkbuilder::KinkBuilderDerivedToDerived kinkBuilder;
@@ -107,19 +135,46 @@ struct FemtoProducerDerivedToDerived {
   o2::framework::Partition<FemtoOmegas> omegaPartition = MAKE_CASCADE_PARTITION(omegaSelection);
   o2::framework::Preslice<FemtoOmegas> perColOmegas = o2::aod::femtobase::stored::fColId;
 
+  // mc builder
+  mcbuilder::McBuilderDerivedToDerived mcBuilder;
+  mcbuilder::McBuilderDerivedToDerivedProducts mcBuilderProducts;
+  mcbuilder::ConfMcTablesDerivedToDerived confMcBuilder;
+
+  o2::framework::Partition<FemtoMcTracks> mcTrackPartition1 = MAKE_TRACK_PARTITION(trackSelections1);
+  o2::framework::Partition<FemtoMcTracks> mcTrackPartition2 = MAKE_TRACK_PARTITION(trackSelections2);
+  o2::framework::Preslice<FemtoMcTracks> perColMcTracks = o2::aod::femtobase::stored::fColId;
+
+  o2::framework::Partition<FemtoMcSigma> mcSigmaPartition = MAKE_SIGMA_PARTITION(sigmaSelection1);
+  o2::framework::Preslice<FemtoMcSigma> perColMcSigma = o2::aod::femtobase::stored::fColId;
+
+  o2::framework::Partition<FemtoMcSigmaPlus> mcSigmaPlusPartition = MAKE_SIGMAPLUS_PARTITION(sigmaPlusSelection1);
+  o2::framework::Preslice<FemtoMcSigmaPlus> perColMcSigmaPlus = o2::aod::femtobase::stored::fColId;
+
   void init(o2::framework::InitContext& /*context*/)
   {
+    const int activeProcesses =
+      static_cast<int>(doprocessTracks) + static_cast<int>(doprocessTracksWithMass) +
+      static_cast<int>(doprocessTracksLambdas) + static_cast<int>(doprocessTracksWithMassLambdas) +
+      static_cast<int>(doprocessLambdas) +
+      static_cast<int>(doprocessTracksXis) + static_cast<int>(doprocessTracksOmegas) +
+      static_cast<int>(doprocessTracksK0shorts) + static_cast<int>(doprocessTracksSigma) +
+      static_cast<int>(doprocessTracksSigmaPlus) +
+      static_cast<int>(doprocessTracksRho0) + static_cast<int>(doprocessTracksPhi) +
+      static_cast<int>(doprocessTracksMc) + static_cast<int>(doprocessTracksSigmaMc) +
+      static_cast<int>(doprocessTracksSigmaPlusMc);
+    if (activeProcesses != 1) {
+      LOG(fatal) << "Exactly one process function must be activated (got " << activeProcesses << ").";
+    }
+
     trackBuilder.init(confTrackBuilder);
     v0Builder.init(confV0Builder);
     cascadeBuilder.init(confCascadeBuilder);
     kinkBuilder.init(confKinkBuilder);
-
-    if ((static_cast<int>(doprocessTracks) + static_cast<int>(doprocessTracksWithMass) + static_cast<int>(doprocessTracksLambdas) + static_cast<int>(doprocessLambdas) + static_cast<int>(doprocessTracksXis) + static_cast<int>(doprocessTracksOmegas) + static_cast<int>(doprocessTracksK0shorts) + static_cast<int>(doprocessTracksSigma) + static_cast<int>(doprocessTracksSigmaPlus)) > 1) {
-      LOG(fatal) << "Only one proccess function can be activated!";
-    }
+    resonanceBuilder.init(confResonanceBuilder);
+    mcBuilder.init(confMcBuilder);
   }
 
-  // proccess functions
+  // process functions
   void processTracks(FilteredFemtoCollision const& col, FemtoTracks const& tracks)
   {
     if (trackBuilder.collisionHasTooFewTracks(col, tracks, trackPartition1, trackPartition2, cache)) {
@@ -133,12 +188,12 @@ struct FemtoProducerDerivedToDerived {
 
   void processTracksWithMass(FilteredFemtoCollision const& col, FemtoTracksWithMass const& tracks)
   {
-    if (trackBuilder.collisionHasTooFewTracks(col, tracks, trackPartition1, trackPartition2, cache)) {
+    if (trackBuilder.collisionHasTooFewTracks(col, tracks, trackWithMassPartition1, trackWithMassPartition2, cache)) {
       return;
     }
     trackBuilder.reset(tracks);
     collisionBuilder.processCollision(col, collisionBuilderProducts);
-    trackBuilder.processTracks(col, tracks, trackPartition1, trackPartition2, cache, trackBuilderProducts, collisionBuilderProducts);
+    trackBuilder.processTracks(col, tracks, trackWithMassPartition1, trackWithMassPartition2, cache, trackBuilderProducts, collisionBuilderProducts);
   }
   PROCESS_SWITCH(FemtoProducerDerivedToDerived, processTracksWithMass, "Process tracks with mass", false);
 
@@ -154,6 +209,18 @@ struct FemtoProducerDerivedToDerived {
   }
   PROCESS_SWITCH(FemtoProducerDerivedToDerived, processTracksLambdas, "Process lambdas and tracks", false);
 
+  void processTracksWithMassLambdas(FilteredFemtoCollision const& col, FemtoTracksWithMass const& tracks, FemtoLambdas const& lambdas)
+  {
+    if (trackBuilder.collisionHasTooFewTracks(col, tracks, trackWithMassPartition1, trackWithMassPartition2, cache) || v0Builder.collisionHasTooFewLambdas(col, lambdas, lambdaPartition, cache)) {
+      return;
+    }
+    trackBuilder.reset(tracks);
+    collisionBuilder.processCollision(col, collisionBuilderProducts);
+    trackBuilder.processTracks(col, tracks, trackWithMassPartition1, trackWithMassPartition2, cache, trackBuilderProducts, collisionBuilderProducts);
+    v0Builder.processLambdas(col, lambdas, tracks, lambdaPartition, trackBuilder, cache, v0BuilderProducts, trackBuilderProducts, collisionBuilderProducts);
+  }
+  PROCESS_SWITCH(FemtoProducerDerivedToDerived, processTracksWithMassLambdas, "Process lambdas and tracks with mass", false);
+
   void processLambdas(FilteredFemtoCollision const& col, FemtoTracks const& tracks, FemtoLambdas const& lambdas)
   {
     if (v0Builder.collisionHasTooFewLambdas(col, lambdas, lambdaPartition, cache)) {
@@ -163,7 +230,7 @@ struct FemtoProducerDerivedToDerived {
     collisionBuilder.processCollision(col, collisionBuilderProducts);
     v0Builder.processLambdas(col, lambdas, tracks, lambdaPartition, trackBuilder, cache, v0BuilderProducts, trackBuilderProducts, collisionBuilderProducts);
   }
-  PROCESS_SWITCH(FemtoProducerDerivedToDerived, processLambdas, "Process lambdas", false);
+  PROCESS_SWITCH(FemtoProducerDerivedToDerived, processLambdas, "Process lambdas only (produced track table contains daughers only)", false);
 
   void processTracksXis(FilteredFemtoCollision const& col, FemtoTracks const& tracks, FemtoXis const& xis)
   {
@@ -224,6 +291,111 @@ struct FemtoProducerDerivedToDerived {
     kinkBuilder.processSigmaPlus(col, sigmaplus, tracks, sigmaPlusPartition, trackBuilder, cache, kinkBuilderProducts, trackBuilderProducts, collisionBuilderProducts);
   }
   PROCESS_SWITCH(FemtoProducerDerivedToDerived, processTracksSigmaPlus, "Process sigmaPlus and tracks", false);
+
+  void processTracksRho0(FilteredFemtoCollision const& col, FemtoTracks const& tracks, FemtoRho0s const& rho0s)
+  {
+    if (trackBuilder.collisionHasTooFewTracks(col, tracks, trackPartition1, trackPartition2, cache) || resonanceBuilder.collisionHasTooFewRho0s(col, rho0s, rho0Partition, cache)) {
+      return;
+    }
+    trackBuilder.reset(tracks);
+    collisionBuilder.processCollision(col, collisionBuilderProducts);
+    trackBuilder.processTracks(col, tracks, trackPartition1, trackPartition2, cache, trackBuilderProducts, collisionBuilderProducts);
+    resonanceBuilder.processRho0s(col, rho0s, tracks, rho0Partition, trackBuilder, cache, resonanceBuilderProducts, trackBuilderProducts, collisionBuilderProducts);
+  }
+  PROCESS_SWITCH(FemtoProducerDerivedToDerived, processTracksRho0, "Process rho0 and tracks", false);
+
+  void processTracksPhi(FilteredFemtoCollision const& col, FemtoTracks const& tracks, FemtoPhis const& phis)
+  {
+    if (trackBuilder.collisionHasTooFewTracks(col, tracks, trackPartition1, trackPartition2, cache) || resonanceBuilder.collisionHasTooFewPhis(col, phis, phiPartition, cache)) {
+      return;
+    }
+    trackBuilder.reset(tracks);
+    collisionBuilder.processCollision(col, collisionBuilderProducts);
+    trackBuilder.processTracks(col, tracks, trackPartition1, trackPartition2, cache, trackBuilderProducts, collisionBuilderProducts);
+    resonanceBuilder.processPhis(col, phis, tracks, phiPartition, trackBuilder, cache, resonanceBuilderProducts, trackBuilderProducts, collisionBuilderProducts);
+  }
+  PROCESS_SWITCH(FemtoProducerDerivedToDerived, processTracksPhi, "Process phi and tracks", false);
+
+  // mc processing
+  //   // NOTE: unlike the other process functions, this one subscribes to the full
+  // collision table and iterates manually. The MC index maps are keyed by source
+  // global index and must live for the whole dataframe
+  void processTracksMc(FilteredFemtoMcCollisions const& cols,
+                       FemtoMcTracks const& tracks,
+                       o2::aod::FMcCols const& mcCols,
+                       FemtoMcParticles const& mcParticles,
+                       o2::aod::FMcMothers const& mcMothers,
+                       o2::aod::FMcPartMoths const& mcPartonicMothers)
+  {
+    // once per dataframe
+    mcBuilder.reset(mcCols, mcParticles);
+
+    for (auto const& col : cols) {
+      if (trackBuilder.collisionHasTooFewTracks(col, tracks, mcTrackPartition1, mcTrackPartition2, cache)) {
+        continue;
+      }
+      // track indexMap is per collision by construction, so it resets here
+      trackBuilder.reset(tracks);
+      collisionBuilder.processCollision(col, collisionBuilderProducts);
+      mcBuilder.fillCollisionWithLabel(col, mcCols, mcBuilderProducts);
+      trackBuilder.processTracksWithMc(col, tracks, mcTrackPartition1, mcTrackPartition2, cache,
+                                       trackBuilderProducts, collisionBuilderProducts,
+                                       mcBuilder, mcCols, mcParticles, mcMothers, mcPartonicMothers, mcBuilderProducts);
+    }
+  }
+  PROCESS_SWITCH(FemtoProducerDerivedToDerived, processTracksMc, "Process tracks with MC information", false);
+
+  void processTracksSigmaMc(FilteredFemtoMcCollisions const& cols,
+                            FemtoMcTracks const& tracks,
+                            FemtoMcSigma const& sigma,
+                            o2::aod::FMcCols const& mcCols,
+                            FemtoMcParticles const& mcParticles,
+                            o2::aod::FMcMothers const& mcMothers,
+                            o2::aod::FMcPartMoths const& mcPartonicMothers)
+  {
+    mcBuilder.reset(mcCols, mcParticles);
+
+    for (auto const& col : cols) {
+      if (trackBuilder.collisionHasTooFewTracks(col, tracks, mcTrackPartition1, mcTrackPartition2, cache) || kinkBuilder.collisionHasTooFewSigma(col, sigma, mcSigmaPartition, cache)) {
+        continue;
+      }
+      trackBuilder.reset(tracks);
+      collisionBuilder.processCollision(col, collisionBuilderProducts);
+      mcBuilder.fillCollisionWithLabel(col, mcCols, mcBuilderProducts);
+      trackBuilder.processTracksWithMc(col, tracks, mcTrackPartition1, mcTrackPartition2, cache,
+                                       trackBuilderProducts, collisionBuilderProducts,
+                                       mcBuilder, mcCols, mcParticles, mcMothers, mcPartonicMothers, mcBuilderProducts);
+      kinkBuilder.processSigmaWithMc(col, sigma, tracks, mcSigmaPartition, trackBuilder, cache, kinkBuilderProducts, trackBuilderProducts, collisionBuilderProducts,
+                                     mcBuilder, mcCols, mcParticles, mcMothers, mcPartonicMothers, mcBuilderProducts);
+    }
+  }
+  PROCESS_SWITCH(FemtoProducerDerivedToDerived, processTracksSigmaMc, "Process sigma and tracks with MC information", false);
+
+  void processTracksSigmaPlusMc(FilteredFemtoMcCollisions const& cols,
+                                FemtoMcTracks const& tracks,
+                                FemtoMcSigmaPlus const& sigmaplus,
+                                o2::aod::FMcCols const& mcCols,
+                                FemtoMcParticles const& mcParticles,
+                                o2::aod::FMcMothers const& mcMothers,
+                                o2::aod::FMcPartMoths const& mcPartonicMothers)
+  {
+    mcBuilder.reset(mcCols, mcParticles);
+
+    for (auto const& col : cols) {
+      if (trackBuilder.collisionHasTooFewTracks(col, tracks, mcTrackPartition1, mcTrackPartition2, cache) || kinkBuilder.collisionHasTooFewSigmaPlus(col, sigmaplus, mcSigmaPlusPartition, cache)) {
+        continue;
+      }
+      trackBuilder.reset(tracks);
+      collisionBuilder.processCollision(col, collisionBuilderProducts);
+      mcBuilder.fillCollisionWithLabel(col, mcCols, mcBuilderProducts);
+      trackBuilder.processTracksWithMc(col, tracks, mcTrackPartition1, mcTrackPartition2, cache,
+                                       trackBuilderProducts, collisionBuilderProducts,
+                                       mcBuilder, mcCols, mcParticles, mcMothers, mcPartonicMothers, mcBuilderProducts);
+      kinkBuilder.processSigmaPlusWithMc(col, sigmaplus, tracks, mcSigmaPlusPartition, trackBuilder, cache, kinkBuilderProducts, trackBuilderProducts, collisionBuilderProducts,
+                                         mcBuilder, mcCols, mcParticles, mcMothers, mcPartonicMothers, mcBuilderProducts);
+    }
+  }
+  PROCESS_SWITCH(FemtoProducerDerivedToDerived, processTracksSigmaPlusMc, "Process sigmaPlus and tracks with MC information", false);
 };
 
 o2::framework::WorkflowSpec defineDataProcessing(o2::framework::ConfigContext const& context)
